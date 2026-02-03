@@ -6,9 +6,7 @@
     "dev": "bunx next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
-    "pages:build": "next build",
-    "pages:deploy": "wrangler pages deploy out"
+    "lint": "eslint ."
   },
   "dependencies": {
     "lucide-react": "^0.562.0",

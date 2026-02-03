@@ -58,17 +58,19 @@ jobs:
         run: bun install
 
       - name: Build web
+        working-directory: apps/web
         env:
           NODE_ENV: production
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-        run: bun run --filter grepbase-web build
+        run: bun run build
 
       - name: Deploy Pages (web)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/web/out --project-name=grepbase
+          workingDirectory: apps/web
+          command: pages deploy .next --project-name=grepbase
 
       - name: Apply D1 migrations (production)
         uses: cloudflare/wrangler-action@v3
