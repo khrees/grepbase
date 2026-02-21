@@ -31,36 +31,11 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env
-.env*.local
+.env*
 
 # vercel
 .vercel
 
-# cloudflare
-.wrangler
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# database
-*.db
-*.db-shm
-*.db-wal
-
-# build artifacts
-dist/
-dist_deploy/
-apps/web/out/
-apps/web/.next/
-apps/api/dist/
-
-# documentation artifacts (keep only README.md)
-DEPLOY*.md
-STATUS.md
-IMPLEMENTATION*.md
-QUICK_FIX.md
-FINAL_SOLUTION.md
-USE_EXISTING_API.md
-CLEANUP_SUMMARY.md
