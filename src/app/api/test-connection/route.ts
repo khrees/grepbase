@@ -42,13 +42,23 @@ const testConnectionSchema = z
     });
 
 type ModelEntry = { id?: string; name?: string };
+type GeminiModelEntry = { name?: string; supportedGenerationMethods?: string[] };
+
+const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
+    'gemini-2.0-pro-exp-02-05': 'gemini-2.5-pro',
+};
+
+function normalizeModelName(name: string): string {
+    const normalized = name.replace(/^models\//, '');
+    return GEMINI_LEGACY_MODEL_ALIASES[normalized] || normalized;
+}
 
 function normalizeModels(models: unknown): string[] {
     if (!Array.isArray(models)) return [];
     return (models as ModelEntry[])
         .map((model) => model.id || model.name)
         .filter((name): name is string => typeof name === 'string')
-        .map((name) => name.replace(/^models\//, ''));
+        .map(normalizeModelName);
 }
 
 async function fetchJson(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
@@ -94,7 +104,19 @@ async function fetchModels(provider: AIProviderType, apiKey?: string, baseUrl?: 
                 String(apiKey || '')
             )}`;
             const data = await fetchJson(url);
-            return normalizeModels(data.models);
+            if (!Array.isArray(data.models)) return [];
+
+            const generativeModels = (data.models as GeminiModelEntry[])
+                .filter(model => {
+                    const methods = model.supportedGenerationMethods;
+                    if (!Array.isArray(methods) || methods.length === 0) return true;
+                    return methods.includes('generateContent');
+                })
+                .map(model => model.name)
+                .filter((name): name is string => typeof name === 'string')
+                .map(normalizeModelName);
+
+            return Array.from(new Set(generativeModels));
         }
 
         case 'ollama':

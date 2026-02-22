@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import ToastHost from '@/components/ToastHost';
 
 export const metadata: Metadata = {
   title: 'Grepbase - Understand Code Through Time',
@@ -16,6 +17,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         {children}
+        <ToastHost />
       </body>
     </html>
   );

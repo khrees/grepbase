@@ -26,6 +26,86 @@ const DEFAULT_MODELS: Record<AIProviderType, string> = {
     kimi: 'kimi-k2.5',
 };
 
+const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
+    'gemini-2.0-pro-exp-02-05': 'gemini-2.5-pro',
+};
+
+type GeminiModelEntry = {
+    name?: string;
+    supportedGenerationMethods?: string[];
+};
+
+const GEMINI_DISCOVERY_TTL_MS = 10 * 60 * 1000;
+const geminiDiscoveryCache = new Map<string, { models: string[]; expiresAt: number }>();
+
+function normalizeGeminiModelName(name: string): string {
+    const trimmed = name.trim();
+    const withoutPrefix = trimmed.replace(/^models\//, '');
+    return GEMINI_LEGACY_MODEL_ALIASES[withoutPrefix] || withoutPrefix;
+}
+
+function modelSupportsGenerateContent(model: GeminiModelEntry): boolean {
+    const methods = model.supportedGenerationMethods;
+    if (!Array.isArray(methods) || methods.length === 0) {
+        return true;
+    }
+    return methods.includes('generateContent');
+}
+
+async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
+    const cached = geminiDiscoveryCache.get(apiKey);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) {
+        return cached.models;
+    }
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch Gemini models: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = (await response.json()) as { models?: GeminiModelEntry[] };
+    const models = Array.from(
+        new Set(
+            (payload.models || [])
+                .filter(modelSupportsGenerateContent)
+                .map(model => model.name || '')
+                .map(name => normalizeGeminiModelName(name))
+                .filter(Boolean)
+        )
+    );
+
+    geminiDiscoveryCache.set(apiKey, { models, expiresAt: now + GEMINI_DISCOVERY_TTL_MS });
+    return models;
+}
+
+function pickGeminiModel(requestedModel: string | undefined, discoveredModels: string[]): string {
+    const normalizedRequested = requestedModel ? normalizeGeminiModelName(requestedModel) : undefined;
+    if (normalizedRequested && discoveredModels.includes(normalizedRequested)) {
+        return normalizedRequested;
+    }
+
+    const preferredOrder = [
+        'gemini-3.1-pro',
+        'gemini-3.1-flash',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+    ];
+
+    const preferredAvailable = preferredOrder.find(model => discoveredModels.includes(model));
+    if (preferredAvailable) return preferredAvailable;
+
+    if (discoveredModels.length > 0) {
+        return discoveredModels[0];
+    }
+
+    return normalizedRequested || DEFAULT_MODELS.gemini;
+}
+
 /**
  * Create an AI provider instance based on configuration
  * Uses dynamic imports to avoid bundling all providers
@@ -38,7 +118,15 @@ export async function createAIProviderAsync(config: AIProviderConfig): Promise<L
             if (!config.apiKey) throw new Error('Gemini API key is required');
             const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
             const google = createGoogleGenerativeAI({ apiKey: config.apiKey });
-            return google(model);
+            let discoveredModels: string[] = [];
+            try {
+                discoveredModels = await fetchAvailableGeminiModels(config.apiKey);
+            } catch {
+                // Discovery is best-effort. We still attempt with fallback/default model.
+            }
+
+            const resolvedModel = pickGeminiModel(model, discoveredModels);
+            return google(resolvedModel);
         }
 
         case 'openai': {
@@ -113,9 +201,11 @@ export function getAvailableModels(type: AIProviderType): string[] {
             return [
                 'gemini-3.1-pro',
                 'gemini-3.1-flash',
+                'gemini-2.5-pro',
+                'gemini-2.5-flash',
                 'gemini-2.0-flash',
-                'gemini-2.0-pro-exp-02-05',
                 'gemini-1.5-pro',
+                'gemini-1.5-flash',
             ];
         case 'openai':
             return [

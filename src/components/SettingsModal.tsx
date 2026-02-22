@@ -6,6 +6,7 @@ import styles from './SettingsModal.module.css';
 import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
 import { secureStorage } from '@/lib/.client/secure-storage';
 import { api } from '@/lib/api-client';
+import { TOAST_EVENT_NAME, type ToastEventDetail } from './ToastHost';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -25,6 +26,15 @@ interface StoredSettings extends Record<AIProviderType, ProviderSettings> {
     autoExplain?: boolean;
 }
 
+const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
+    'gemini-2.0-pro-exp-02-05': 'gemini-2.5-pro',
+};
+
+function normalizeProviderModel(provider: AIProviderType, model: string): string {
+    if (provider !== 'gemini') return model;
+    return GEMINI_LEGACY_MODEL_ALIASES[model] || model;
+}
+
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
     const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>({
@@ -36,6 +46,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         glm: { apiKey: '', model: 'glm-5', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
         kimi: { apiKey: '', model: 'kimi-k2.5', baseUrl: 'https://api.moonshot.cn/v1' },
     });
+    const [detectedModels, setDetectedModels] = useState<Partial<Record<AIProviderType, string[]>>>({});
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
     const [testError, setTestError] = useState<string | null>(null);
@@ -45,7 +56,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     useEffect(() => {
         const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
         if (sessionData) {
-            setSettings(prev => ({ ...prev, ...sessionData }));
+            setSettings(prev => {
+                const merged = { ...prev, ...sessionData };
+                return {
+                    ...merged,
+                    gemini: {
+                        ...merged.gemini,
+                        model: normalizeProviderModel('gemini', merged.gemini.model),
+                    },
+                };
+            });
             if (sessionData.activeProvider) setActiveProvider(sessionData.activeProvider);
             if (sessionData.autoExplain) setAutoExplain(sessionData.autoExplain);
             return;
@@ -53,7 +73,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         // Load from encrypted storage (async)
         secureStorage.getSecureItem<StoredSettings>(STORAGE_KEY).then(saved => {
             if (saved) {
-                setSettings(prev => ({ ...prev, ...saved }));
+                setSettings(prev => {
+                    const merged = { ...prev, ...saved };
+                    return {
+                        ...merged,
+                        gemini: {
+                            ...merged.gemini,
+                            model: normalizeProviderModel('gemini', merged.gemini.model),
+                        },
+                    };
+                });
                 if (saved.activeProvider) setActiveProvider(saved.activeProvider);
                 if (saved.autoExplain) setAutoExplain(saved.autoExplain);
                 // Also populate session storage so sync reads work this session
@@ -64,14 +93,33 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     // Save settings to secure storage
     function saveSettings() {
-        const data = {
+        const normalizedModel = normalizeProviderModel(activeProvider, settings[activeProvider].model);
+        const normalizedSettings: Record<AIProviderType, ProviderSettings> = {
             ...settings,
+            [activeProvider]: {
+                ...settings[activeProvider],
+                model: normalizedModel,
+            },
+        };
+
+        const data = {
+            ...normalizedSettings,
             activeProvider,
             autoExplain,
         };
 
+        setSettings(normalizedSettings);
         secureStorage.setSessionItem(STORAGE_KEY, data);
         secureStorage.setSecureItem(STORAGE_KEY, data); // fire-and-forget async
+
+        if (typeof window !== 'undefined') {
+            const detail: ToastEventDetail = {
+                kind: 'success',
+                message: `Now using ${normalizedModel} model`,
+                durationMs: 3200,
+            };
+            window.dispatchEvent(new CustomEvent<ToastEventDetail>(TOAST_EVENT_NAME, { detail }));
+        }
 
         onClose();
     }
@@ -113,6 +161,27 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
             setTestResult('success');
             if (data.models?.length) {
+                setDetectedModels(prev => ({
+                    ...prev,
+                    [activeProvider]: data.models!,
+                }));
+
+                setSettings(prev => {
+                    const current = prev[activeProvider];
+                    const currentModel = normalizeProviderModel(activeProvider, current.model);
+                    const nextModel = data.models!.includes(currentModel)
+                        ? currentModel
+                        : data.models![0];
+
+                    return {
+                        ...prev,
+                        [activeProvider]: {
+                            ...current,
+                            model: nextModel,
+                        },
+                    };
+                });
+
                 setTestError(`Found ${data.models.length} model(s): ${data.models.slice(0, 3).join(', ')}${data.models.length > 3 ? '...' : ''}`);
             }
         } catch (err) {
@@ -127,7 +196,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     const providers: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
     const currentSettings = settings[activeProvider];
-    const models = getAvailableModels(activeProvider);
+    const models = detectedModels[activeProvider] || getAvailableModels(activeProvider);
 
     return (
         <div className={styles.overlay} onClick={onClose}>
@@ -305,7 +374,13 @@ export function getAISettings(): { provider: AIProviderType; config: ProviderSet
         const provider = sessionData.activeProvider || 'gemini';
         const config = sessionData[provider];
         if (config) {
-            return { provider, config };
+            return {
+                provider,
+                config: {
+                    ...config,
+                    model: normalizeProviderModel(provider, config.model),
+                },
+            };
         }
     }
 
