@@ -27,7 +27,7 @@ export const githubUrlSchema = z.string()
 
 // AI Provider Configuration
 export const aiProviderConfigSchema = z.object({
-    type: z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio']),
+    type: z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']),
     apiKey: z.string().optional(),
     baseUrl: z.string().url().optional(),
     model: z.string().optional(),
@@ -43,7 +43,7 @@ export const aiProviderConfigSchema = z.object({
 );
 
 // AI Provider type enum for reuse
-export const aiProviderTypeSchema = z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio']);
+export const aiProviderTypeSchema = z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']);
 export type AIProviderTypeFromSchema = z.infer<typeof aiProviderTypeSchema>;
 
 // Explain API request
@@ -52,6 +52,7 @@ export const explainRequestSchema = z.object({
     repoId: z.number().int().positive(),
     commitSha: z.string().optional(),
     question: z.string().optional(),
+    visibleFiles: z.array(z.string()).optional(),
     provider: aiProviderConfigSchema.optional(),
     // Flat params for backward compatibility
     providerType: aiProviderTypeSchema.optional(),

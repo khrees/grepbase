@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { repositories, commits } from '@/db';
+import { repositories, commits, files } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { fetchCommitDiff } from '@/services/github';
 import { explainCommit, explainProject, answerQuestion } from '@/services/explain';
@@ -10,6 +10,14 @@ import { rateLimiter } from '@/lib/rate-limit';
 import { RATE_LIMITS, AI_CONSTANTS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
 import { getDb } from '@/db';
+
+const CODE_EXTENSIONS = new Set([
+    '.js', '.jsx', '.ts', '.tsx', '.py', '.rs', '.go', '.java',
+    '.cpp', '.c', '.h', '.hpp', '.rb', '.php', '.swift', '.kt',
+    '.md', '.json', '.yaml', '.yml', '.toml', '.css', '.scss',
+    '.html', '.xml', '.sql', '.sh', '.bash',
+]);
+const MAX_FILE_SIZE = 100000; // 100KB max for content fetching
 
 function getClientIdFromHeaders(req: NextRequest): string {
     const cfConnectingIp = req.headers.get('cf-connecting-ip');
@@ -22,6 +30,50 @@ function getClientIdFromHeaders(req: NextRequest): string {
     if (xRealIp) return xRealIp;
 
     return 'unknown';
+}
+
+function normalizePath(path: string): string {
+    return path.trim().replace(/^\/+/, '').replace(/^\.\/+/, '').replace(/\/+$/, '');
+}
+
+function isOpenableFilePath(path: string, size: number, hasContent: boolean): boolean {
+    if (hasContent) return true;
+
+    const ext = `.${path.split('.').pop() || ''}`.toLowerCase();
+    const isCodeFile = CODE_EXTENSIONS.has(ext);
+    const isSmallEnough = size <= MAX_FILE_SIZE;
+
+    return isCodeFile && isSmallEnough;
+}
+
+async function resolveAvailableFilePathsForCommit(
+    db: ReturnType<typeof getDb>,
+    commitId: number,
+    visibleFiles?: string[]
+): Promise<string[]> {
+    if (visibleFiles && visibleFiles.length > 0) {
+        return Array.from(
+            new Set(
+                visibleFiles
+                    .map(normalizePath)
+                    .filter(Boolean)
+            )
+        );
+    }
+
+    const commitFiles = await (db.select({
+        path: files.path,
+        size: files.size,
+        content: files.content,
+    }) as any)
+        .from(files)
+        .where(eq(files.commitId, commitId));
+
+    return commitFiles
+        .filter((file: { path: string; size: number | null; content: string | null }) =>
+            isOpenableFilePath(file.path, Number(file.size || 0), Boolean(file.content))
+        )
+        .map((file: { path: string }) => normalizePath(file.path));
 }
 
 export async function POST(request: NextRequest) {
@@ -93,6 +145,7 @@ export async function POST(request: NextRequest) {
             apiKey,
             model,
             baseUrl,
+            visibleFiles,
         } = body;
 
         const providerConfig: AIProviderConfig = {
@@ -129,10 +182,10 @@ export async function POST(request: NextRequest) {
             currentCommitIndex: 0,
         };
 
-        let result;
+        let response: Response;
 
         if (type === 'project') {
-            result = await explainProject(projectContext, providerConfig);
+            response = await explainProject(projectContext, providerConfig);
         } else if (type === 'commit' && commitSha) {
             const commit = await (db.select() as any)
                 .from(commits)
@@ -145,6 +198,11 @@ export async function POST(request: NextRequest) {
             }
 
             const diff = await fetchCommitDiff(repo[0].owner, repo[0].name, commitSha);
+            const availableFiles = await resolveAvailableFilePathsForCommit(
+                db,
+                commit[0].id,
+                visibleFiles
+            );
 
             const commitContext = {
                 sha: commit[0].sha,
@@ -153,11 +211,12 @@ export async function POST(request: NextRequest) {
                 date: commit[0].date,
                 diff,
                 filesChanged: [],
+                availableFiles,
             };
 
             projectContext.currentCommitIndex = commit[0].order;
 
-            result = await explainCommit(commitContext, projectContext, providerConfig);
+            response = await explainCommit(commitContext, projectContext, providerConfig);
         } else if (type === 'question' && question) {
             let commitContext;
             if (commitSha) {
@@ -174,12 +233,17 @@ export async function POST(request: NextRequest) {
                         date: commit[0].date,
                         diff: null,
                         filesChanged: [],
+                        availableFiles: await resolveAvailableFilePathsForCommit(
+                            db,
+                            commit[0].id,
+                            visibleFiles
+                        ),
                     };
                     projectContext.currentCommitIndex = commit[0].order;
                 }
             }
 
-            result = await answerQuestion(
+            response = await answerQuestion(
                 question,
                 { commit: commitContext, project: projectContext },
                 providerConfig
@@ -209,12 +273,13 @@ ${commitsList}
 
 Provide a brief, engaging summary of what was accomplished. Use markdown formatting.`;
 
-            result = streamText({
+            const streamResult = streamText({
                 model: aiModel,
                 system: systemPrompt,
                 prompt: userPrompt,
                 maxOutputTokens: AI_CONSTANTS.MAX_OUTPUT_TOKENS.DAY_SUMMARY,
             });
+            response = streamResult.toTextStreamResponse();
         } else {
             requestLogger.warn({ type }, 'Invalid request type');
             return NextResponse.json({ error: 'Invalid request type' }, { status: 400 });
@@ -239,8 +304,7 @@ Provide a brief, engaging summary of what was accomplished. Use markdown formatt
 
         requestLogger.info({ type, repoId, duration }, 'Explanation generated successfully');
 
-        // Convert AI SDK streaming response to Next.js Web Response
-        return (result as any).toDataStreamResponse();
+        return response;
     } catch (error) {
         const duration = Date.now() - startTime;
         const clientId = getClientIdFromHeaders(request);

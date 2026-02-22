@@ -131,10 +131,13 @@
     }
 }
 
-/* Make calendar large in modal - we pass this class to the component */
+/* Make calendar fit in modal - we pass this class to the component */
 .largeCalendar {
     width: 100%;
-    height: 100%;
+    max-width: 500px;
+    height: auto;
+    margin: 0 auto;
+    align-self: center;
 }
 
 .largeCalendar :global(.CalendarTimeline_calendar__2nO9e) {

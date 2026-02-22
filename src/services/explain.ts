@@ -3,19 +3,25 @@
  * Uses AI to explain commits, files, and projects
  */
 
-import { streamText, type StreamTextResult } from 'ai';
+import { streamText } from 'ai';
 import { createAIProviderAsync, type AIProviderConfig } from './ai-providers';
 import { cache, CACHE_TTL } from './cache';
 
-/**
- * Interface for cached explanation responses that mimics StreamTextResult
- */
-interface CachedStreamResult {
-    toTextStreamResponse: () => Response;
-    text: Promise<string>;
+// Helper to return cached text in the same format as toTextStreamResponse()
+function createCachedResponse(text: string): Response {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+        start(controller) {
+            controller.enqueue(encoder.encode(text));
+            controller.close();
+        }
+    });
+    return new Response(stream, {
+        headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+        },
+    });
 }
-
-type ExplainResult = StreamTextResult<Record<string, never>, never> | CachedStreamResult;
 
 // Helper to generate a hash for cache keys
 async function sha256(str: string): Promise<string> {
@@ -26,6 +32,24 @@ async function sha256(str: string): Promise<string> {
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function extractChangedFilesFromDiff(diff: string | null, limit = 40): string[] {
+    if (!diff) return [];
+
+    const files = new Set<string>();
+    const regex = /^diff --git a\/(.+?) b\/(.+)$/gm;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(diff)) !== null) {
+        const nextPath = match[2] !== '/dev/null' ? match[2] : match[1];
+        if (nextPath && nextPath !== '/dev/null') {
+            files.add(nextPath);
+        }
+        if (files.size >= limit) break;
+    }
+
+    return Array.from(files);
+}
+
 export interface CommitContext {
     sha: string;
     message: string;
@@ -33,6 +57,7 @@ export interface CommitContext {
     date: Date;
     diff: string | null;
     filesChanged: string[];
+    availableFiles?: string[];
 }
 
 export interface FileContext {
@@ -56,8 +81,27 @@ export async function explainCommit(
     commit: CommitContext,
     project: ProjectContext,
     providerConfig: AIProviderConfig
-): Promise<ExplainResult> {
+): Promise<Response> {
     const model = await createAIProviderAsync(providerConfig);
+    const rawCommitTitle = commit.message.split('\n')[0]?.trim() || commit.sha.substring(0, 7);
+    const shortCommitTitle = rawCommitTitle.length > 50
+        ? `${rawCommitTitle.slice(0, 50).trimEnd()}...`
+        : rawCommitTitle;
+    const availableFiles = Array.from(
+        new Set((commit.availableFiles || []).map(path => path.trim()).filter(Boolean))
+    );
+    const availableFileSet = new Set(availableFiles);
+    const changedFiles = commit.filesChanged.length > 0
+        ? commit.filesChanged
+        : extractChangedFilesFromDiff(commit.diff);
+    const openableChangedFiles = availableFileSet.size > 0
+        ? changedFiles.filter(file => availableFileSet.has(file))
+        : changedFiles;
+    const changedFilesMarkdown = openableChangedFiles.length > 0
+        ? openableChangedFiles.map(file => `- ${file}`).join('\n')
+        : availableFileSet.size > 0
+            ? '- None (no changed files from this commit are openable in the current UI view)'
+            : '- Unknown';
 
     const systemPrompt = `You are an expert code reviewer guiding developers through a codebase's evolution.
 
@@ -65,42 +109,58 @@ Project: ${project.name}
 ${project.description ? `Description: ${project.description}` : ''}
 Progress: Commit ${project.currentCommitIndex} of ${project.totalCommits}
 
-Analyze this commit within the context of the repository at this point in time. Provide a cohesive explanation that captures the intent behind the changes—what problem they solve or what capability they introduce—and how this work advances the project's overarching purpose. Draw connections between the technical implementation and the product vision, helping the reader understand not just what changed, but why it matters in the broader narrative of this project's development.
+Analyze this commit within the context of the repository at this point in time. Explain intent, implementation details, and impact with enough technical depth for an engineer onboarding to the codebase.
 
-Be concise yet insightful. Use markdown formatting.`;
+Output requirements:
+- Return plain markdown only.
+- Do not wrap the response in triple backticks.
+- Start with a level-1 heading that uses the provided short commit title (no commit SHA in the heading).
+- Use these sections in order:
+  1. ## Executive Summary
+  2. ## Critical Files
+  3. ## Implementation Deep Dive
+  4. ## Architecture & Impact
+  5. ## Risks, Gaps, and Next Steps
+- In "Critical Files", list 3-8 most important files changed in this commit.
+- Every file in "Critical Files" must use this exact link format:
+  - [\`path/to/file.ext\`](file:path/to/file.ext): why this file is important
+- Only reference files that appear in the provided "Changed Files (Openable in UI)" list.
+- Do not generate file links for package names or dependencies (e.g. @scope/pkg).
+- If the openable list is empty, explicitly say no openable changed files are available and avoid inventing file paths.
+- Prioritize concrete implementation details over generic statements.`;
 
     const userPrompt = `Explain this commit:
 
-**Commit:** ${commit.sha.substring(0, 7)}
+**Short Commit Title (max 50 chars):** ${shortCommitTitle}
+**Commit SHA:** ${commit.sha.substring(0, 7)}
 **Message:** ${commit.message}
 **Author:** ${commit.authorName || 'Unknown'}
 **Date:** ${commit.date.toLocaleDateString()}
 
-**Files Changed:** ${commit.filesChanged.length > 0 ? commit.filesChanged.join(', ') : 'Unknown'}
+**Changed Files (Openable in UI):**
+${changedFilesMarkdown}
 
-${commit.diff ? `**Diff:**\n\`\`\`diff\n${commit.diff.substring(0, 2000)}${commit.diff.length > 2000 ? '\n... (truncated)' : ''}\n\`\`\`` : ''}`;
+${commit.diff ? `**Diff:**\n\`\`\`diff\n${commit.diff.substring(0, 7000)}${commit.diff.length > 7000 ? '\n... (truncated)' : ''}\n\`\`\`` : ''}`;
 
     const cacheKey = `explain:commit:${commit.sha}:${await sha256(systemPrompt + userPrompt + (providerConfig.model || 'default'))}`;
 
     // Check cache
     const cached = await cache.get<string>(cacheKey);
     if (cached) {
-        const cachedResult: CachedStreamResult = {
-            toTextStreamResponse: () => new Response(cached),
-            text: Promise.resolve(cached),
-        };
-        return cachedResult;
+        return createCachedResponse(cached);
     }
 
-    return streamText({
+    const result = streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        maxOutputTokens: 1000,
+        maxOutputTokens: 1400,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TTL.WEEK);
         },
     });
+
+    return result.toTextStreamResponse();
 }
 
 /**
@@ -110,7 +170,7 @@ export async function explainFile(
     file: FileContext,
     project: ProjectContext,
     providerConfig: AIProviderConfig
-): Promise<ExplainResult> {
+): Promise<Response> {
     const model = await createAIProviderAsync(providerConfig);
 
     const systemPrompt = `You are an expert code reviewer helping developers understand a codebase.
@@ -140,14 +200,10 @@ ${file.content.substring(0, 8000)}${file.content.length > 8000 ? '\n// ... (trun
     // Check cache
     const cached = await cache.get<string>(cacheKey);
     if (cached) {
-        const cachedResult: CachedStreamResult = {
-            toTextStreamResponse: () => new Response(cached),
-            text: Promise.resolve(cached),
-        };
-        return cachedResult;
+        return createCachedResponse(cached);
     }
 
-    return streamText({
+    const result = streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
@@ -156,6 +212,8 @@ ${file.content.substring(0, 8000)}${file.content.length > 8000 ? '\n// ... (trun
             cache.set(cacheKey, text, CACHE_TTL.WEEK);
         },
     });
+
+    return result.toTextStreamResponse();
 }
 
 /**
@@ -164,7 +222,7 @@ ${file.content.substring(0, 8000)}${file.content.length > 8000 ? '\n// ... (trun
 export async function explainProject(
     project: ProjectContext,
     providerConfig: AIProviderConfig
-): Promise<ExplainResult> {
+): Promise<Response> {
     const model = await createAIProviderAsync(providerConfig);
 
     const systemPrompt = `You are an expert at explaining software projects to newcomers.
@@ -189,14 +247,10 @@ Please explain:
     // Check cache
     const cached = await cache.get<string>(cacheKey);
     if (cached) {
-        const cachedResult: CachedStreamResult = {
-            toTextStreamResponse: () => new Response(cached),
-            text: Promise.resolve(cached),
-        };
-        return cachedResult;
+        return createCachedResponse(cached);
     }
 
-    return streamText({
+    const result = streamText({
         model,
         system: systemPrompt,
         prompt: userPrompt,
@@ -205,6 +259,8 @@ Please explain:
             cache.set(cacheKey, text, CACHE_TTL.DAY); // Project explanation might change more often?
         },
     });
+
+    return result.toTextStreamResponse();
 }
 
 /**
@@ -218,13 +274,17 @@ export async function answerQuestion(
         project: ProjectContext;
     },
     providerConfig: AIProviderConfig
-): Promise<ExplainResult> {
+): Promise<Response> {
     const model = await createAIProviderAsync(providerConfig);
 
     let contextText = `Project: ${context.project.name}\n`;
 
     if (context.commit) {
         contextText += `\nCurrent Commit: ${context.commit.sha.substring(0, 7)} - ${context.commit.message}`;
+        if (context.commit.availableFiles && context.commit.availableFiles.length > 0) {
+            const visibleFiles = context.commit.availableFiles.slice(0, 200).join('\n');
+            contextText += `\nVisible Files (openable in UI):\n${visibleFiles}`;
+        }
     }
 
     if (context.file) {
@@ -234,6 +294,9 @@ export async function answerQuestion(
     const systemPrompt = `You are a helpful assistant explaining code to developers learning a new codebase.
 Answer questions clearly and concisely using the provided context.
 
+When referencing a repository file, format it as [\`path/to/file.ext\`](file:path/to/file.ext) so the UI can open it.
+Only reference files from the "Visible Files (openable in UI)" list when that list is provided.
+
 ${contextText}`;
 
     // For questions, we cache based on the exact question and context
@@ -242,14 +305,10 @@ ${contextText}`;
     // Check cache
     const cached = await cache.get<string>(cacheKey);
     if (cached) {
-        const cachedResult: CachedStreamResult = {
-            toTextStreamResponse: () => new Response(cached),
-            text: Promise.resolve(cached),
-        };
-        return cachedResult;
+        return createCachedResponse(cached);
     }
 
-    return streamText({
+    const result = streamText({
         model,
         system: systemPrompt,
         prompt: question,
@@ -258,4 +317,6 @@ ${contextText}`;
             cache.set(cacheKey, text, CACHE_TTL.WEEK);
         },
     });
+
+    return result.toTextStreamResponse();
 }

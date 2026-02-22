@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     BookOpen, ChevronLeft, ChevronRight, Home, Settings,
-    Loader2, MessageSquare, GitCommit, User, Calendar, Maximize2, Minimize2, ChevronDown
+    Loader2, MessageSquare, GitCommit, User, Calendar, Maximize2, Minimize2, ChevronDown, RefreshCw
 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import styles from './explore.module.css';
@@ -58,30 +58,76 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const [showAIPanel, setShowAIPanel] = useState(true);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [focusMode, setFocusMode] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const currentCommit = commits[currentIndex];
+    const commitSelectionKey = useMemo(() => `grepbase:last_commit:${id}`, [id]);
+    const visibleFilePaths = useMemo(
+        () => files
+            .filter(file => file.shouldFetchContent || file.hasContent)
+            .map(file => file.path),
+        [files]
+    );
 
-    // Fetch repository and commits on mount
-    useEffect(() => {
-        async function fetchData() {
-            try {
-                const data = await api.get<{
-                    repository: Repository;
-                    commits: Commit[];
-                }>(`/api/repos/${id}/commits`);
+    const fetchRepositoryData = useCallback(async (preserveSha?: string, showLoading = false) => {
+        if (showLoading) {
+            setLoading(true);
+        }
 
-                setRepository(data.repository);
-                setCommits(data.commits);
-                setLoading(false);
-            } catch (err) {
-                setError(err instanceof Error ? err.message : 'Something went wrong');
+        try {
+            const data = await api.get<{
+                repository: Repository;
+                commits: Commit[];
+            }>(`/api/repos/${id}/commits`);
+
+            let targetSha = preserveSha;
+            if (!targetSha && typeof window !== 'undefined') {
+                const urlSha = new URLSearchParams(window.location.search).get('sha');
+                const storedSha =
+                    sessionStorage.getItem(commitSelectionKey) ||
+                    localStorage.getItem(commitSelectionKey);
+                targetSha = urlSha || storedSha || undefined;
+            }
+
+            setRepository(data.repository);
+            setCommits(data.commits);
+            setCurrentIndex(prev => {
+                if (data.commits.length === 0) return 0;
+                if (targetSha) {
+                    const idx = data.commits.findIndex(commit => commit.sha === targetSha);
+                    if (idx >= 0) return idx;
+                }
+                return Math.min(prev, data.commits.length - 1);
+            });
+            setError(null);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Something went wrong');
+        } finally {
+            if (showLoading) {
                 setLoading(false);
             }
         }
+    }, [commitSelectionKey, id]);
 
-        fetchData();
-    }, [id]);
+    // Fetch repository and commits on mount
+    useEffect(() => {
+        fetchRepositoryData(undefined, true);
+    }, [fetchRepositoryData]);
+
+    // Persist selected commit in URL and storage so refresh/resync keeps context.
+    useEffect(() => {
+        if (!currentCommit?.sha || typeof window === 'undefined') return;
+
+        sessionStorage.setItem(commitSelectionKey, currentCommit.sha);
+        localStorage.setItem(commitSelectionKey, currentCommit.sha);
+
+        const currentUrl = new URL(window.location.href);
+        if (currentUrl.searchParams.get('sha') !== currentCommit.sha) {
+            currentUrl.searchParams.set('sha', currentCommit.sha);
+            window.history.replaceState({}, '', currentUrl.toString());
+        }
+    }, [commitSelectionKey, currentCommit?.sha]);
 
     // Fetch files when commit changes
     useEffect(() => {
@@ -143,6 +189,93 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             console.error('Failed to fetch file content:', err);
         } finally {
             setLoadingContent(false);
+        }
+    }
+
+    async function openFileFromAIReference(path: string) {
+        const normalized = path
+            .trim()
+            .replace(/^\/+/, '')
+            .replace(/^a\//, '')
+            .replace(/^b\//, '')
+            .replace(/^\.\/+/, '')
+            .replace(/\/+$/, '');
+        if (!normalized) return;
+
+        const exact =
+            files.find(file => file.path === normalized) ||
+            files.find(file => file.path.toLowerCase() === normalized.toLowerCase());
+
+        if (exact) {
+            await selectFile(exact);
+            return;
+        }
+
+        const suffix =
+            files.find(file => file.path.endsWith(`/${normalized}`)) ||
+            files.find(file => file.path.endsWith(normalized));
+
+        if (suffix) {
+            await selectFile(suffix);
+            return;
+        }
+
+        // Directory reference (e.g. "src/app/api"): open the first file inside.
+        const directoryPrefix = `${normalized}/`;
+        const firstInDirectory = [...files]
+            .filter(file => file.path.startsWith(directoryPrefix))
+            .sort((a, b) => a.path.localeCompare(b.path))[0];
+
+        if (firstInDirectory) {
+            await selectFile(firstInDirectory);
+        }
+    }
+
+    // Trigger explicit revalidation / resync
+    async function handleResync() {
+        if (!repository || syncing) return;
+        setSyncing(true);
+
+        try {
+            const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
+                url: `github.com/${repository.owner}/${repository.name}`
+            });
+
+            if (data.jobId) {
+                let attempts = 0;
+                const maxAttempts = 60;
+
+                const poll = async (): Promise<void> => {
+                    attempts++;
+                    try {
+                        const jobResponse = await api.get<{ status: string; error?: string }>(`/api/jobs/${data.jobId}`);
+
+                        if (jobResponse.status === 'completed') {
+                            await fetchRepositoryData(currentCommit?.sha, false);
+                            setSyncing(false);
+                        } else if (jobResponse.status === 'failed') {
+                            console.error('Sync failed:', jobResponse.error);
+                            setSyncing(false);
+                        } else if (attempts < maxAttempts) {
+                            setTimeout(poll, 2000);
+                        } else {
+                            console.error('Sync timed out');
+                            setSyncing(false);
+                        }
+                    } catch (e) {
+                        console.error('Polling error:', e);
+                        setSyncing(false);
+                    }
+                };
+
+                poll();
+            } else {
+                await fetchRepositoryData(currentCommit?.sha, false);
+                setSyncing(false);
+            }
+        } catch (err) {
+            console.error('Failed to trigger resync:', err);
+            setSyncing(false);
         }
     }
 
@@ -242,6 +375,15 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 </div>
 
                 <div className={styles.headerRight}>
+                    <button
+                        className={`btn btn-ghost ${syncing ? styles.active : ''}`}
+                        onClick={handleResync}
+                        disabled={syncing}
+                        title="Resync Repository"
+                    >
+                        {syncing ? <Loader2 size={18} className={styles.spinner} /> : <RefreshCw size={18} />}
+                    </button>
+
                     <button
                         className={`btn btn-ghost ${focusMode ? styles.active : ''}`}
                         onClick={() => setFocusMode(!focusMode)}
@@ -373,6 +515,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     commit={currentCommit}
                                     totalCommits={commits.length}
                                     currentIndex={currentIndex}
+                                    onOpenFile={openFileFromAIReference}
+                                    visibleFilePaths={visibleFilePaths}
                                 />
                             </div>
                         </Panel>

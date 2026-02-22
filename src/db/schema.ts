@@ -20,7 +20,7 @@ export const repositories = sqliteTable('repositories', {
 export const commits = sqliteTable('commits', {
     id: integer('id').primaryKey({ autoIncrement: true }),
     repoId: integer('repo_id').notNull().references(() => repositories.id, { onDelete: 'cascade' }),
-    sha: text('sha').notNull(),
+    sha: text('sha').notNull().unique(),
     message: text('message').notNull(),
     authorName: text('author_name'),
     authorEmail: text('author_email'),

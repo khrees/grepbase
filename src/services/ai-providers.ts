@@ -140,7 +140,7 @@ export function getAvailableModels(type: AIProviderType): string[] {
                 'claude-3-5-haiku-20241022',
             ];
         case 'ollama':
-            return ['llama-4-scout', 'llama3.2', 'llama3.1', 'codellama', 'mistral', 'phi3', 'qwen2.5', 'meta-llama-3.1-8b-instruct', 'qwen2.5-7b-instruct'];
+            return ['llama-4-scout', 'llama3.2', 'llama3.1', 'codellama', 'mistral', 'phi3', 'qwen2.5', 'qwen3:8b', 'meta-llama-3.1-8b-instruct', 'qwen2.5-7b-instruct'];
         case 'lmstudio':
             return ['deepseek-r1-distill-llama-8b', 'meta-llama-3.1-8b-instruct', 'qwen2.5-7b-instruct'];
         case 'glm':

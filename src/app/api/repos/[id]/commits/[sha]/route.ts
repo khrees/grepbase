@@ -65,6 +65,12 @@ export async function GET(
                 size: f.size,
                 language: f.language,
                 hasContent: !!f.hasContent,
+                shouldFetchContent: (() => {
+                    const ext = '.' + (f.path.split('.').pop() || '');
+                    const isCodeFile = CODE_EXTENSIONS.includes(ext.toLowerCase());
+                    const isSmallEnough = Number(f.size || 0) <= MAX_FILE_SIZE;
+                    return isCodeFile && isSmallEnough;
+                })(),
             }));
 
             return NextResponse.json({

@@ -1,8 +1,9 @@
 
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Sparkles, Send, Loader2, AlertCircle, RefreshCw, X, Clock, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import styles from './AIPanel.module.css';
 import { getAISettings, getAutoExplainEnabled } from './SettingsModal';
 import { api } from '@/lib/api-client';
@@ -22,6 +23,8 @@ interface AIPanelProps {
     };
     totalCommits: number;
     currentIndex: number;
+    onOpenFile?: (path: string) => void;
+    visibleFilePaths?: string[];
 }
 
 interface Message {
@@ -29,7 +32,136 @@ interface Message {
     content: string;
 }
 
-export default function AIPanel({ repository, commit }: AIPanelProps) {
+const CHAT_STORAGE_PREFIX = 'grepbase:ai_chat:';
+
+function getChatStorageKey(repoId: number, commitSha: string): string {
+    return `${CHAT_STORAGE_PREFIX}${repoId}:${commitSha}`;
+}
+
+function restoreMessagesFromStorage(storageKey: string): Message[] {
+    if (typeof window === 'undefined') return [];
+
+    const raw = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey);
+    if (!raw) return [];
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+
+        return parsed.filter((item: unknown): item is Message => {
+            if (!item || typeof item !== 'object') return false;
+            const role = (item as { role?: unknown }).role;
+            const content = (item as { content?: unknown }).content;
+            return (role === 'user' || role === 'assistant') && typeof content === 'string';
+        });
+    } catch {
+        return [];
+    }
+}
+
+function normalizeAssistantMarkdown(content: string): string {
+    const trimmed = content.trim();
+
+    // Some models wrap the full response in ```markdown fences.
+    // Unwrap that so headings/lists render as markdown in the UI.
+    const fencedMarkdown = trimmed.match(/^```[ \t]*(markdown|md|mdx)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
+    if (fencedMarkdown) {
+        const language = fencedMarkdown[1]?.toLowerCase();
+        const inner = fencedMarkdown[2].trim();
+        const looksLikeMarkdown = /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>)/.test(inner);
+
+        if (language || looksLikeMarkdown) {
+            return inner;
+        }
+    }
+
+    return content;
+}
+
+function looksLikeRepositoryFilePath(value: string): boolean {
+    if (!value || /\s/.test(value)) return false;
+
+    // Package names such as @types/better-sqlite3 are not repository file paths.
+    if (/^@[^/]+\/[^/]+$/.test(value)) return false;
+
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return false;
+
+    const hasSeparator = value.includes('/');
+    const hasExtension = /\.[A-Za-z0-9_-]+$/.test(value);
+    const hasDotfile = /^\.{1,2}[A-Za-z0-9._-]/.test(value);
+    const isKnownRootFile = /^(README(\.md)?|LICENSE|Dockerfile|Makefile|package\.json|tsconfig(\..+)?\.json|bunfig\.toml)$/i.test(value);
+    const startsWithCommonCodeDir = /^(src|app|pages|components|lib|server|api|scripts|drizzle|public|tests?|docs)\//.test(value);
+    const isShortDirectoryPath = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){1,4}\/?$/.test(value);
+
+    if (startsWithCommonCodeDir) return true;
+    if (hasExtension || hasDotfile || isKnownRootFile) return true;
+    if (hasSeparator && isShortDirectoryPath) return true;
+
+    return false;
+}
+
+function normalizeFileReference(raw: string): string | null {
+    let value = raw.trim();
+    if (!value) return null;
+
+    // Remove common wrappers/punctuation around model-emitted file references
+    value = value
+        .replace(/^[`"'([{<]+/, '')
+        .replace(/[`"')\]}>.,;:!?]+$/, '')
+        .replace(/^[./]+/, match => (match === './' ? '' : match))
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
+
+    if (!value || !looksLikeRepositoryFilePath(value)) return null;
+    return value;
+}
+
+function extractFileReferenceFromHref(href?: string): string | null {
+    if (!href) return null;
+
+    let candidate = href.trim();
+    if (!candidate || candidate.startsWith('#')) return null;
+
+    try {
+        candidate = decodeURIComponent(candidate);
+    } catch {
+        // Keep original candidate if URL decoding fails.
+    }
+
+    if (candidate.startsWith('file://')) {
+        return normalizeFileReference(candidate.slice('file://'.length));
+    }
+
+    if (candidate.startsWith('file:')) {
+        return normalizeFileReference(candidate.slice('file:'.length));
+    }
+
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(candidate)) {
+        return null;
+    }
+
+    return normalizeFileReference(candidate);
+}
+
+async function streamResponseText(response: Response, onChunk: (chunk: string) => void): Promise<void> {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    const decoder = new TextDecoder();
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        onChunk(decoder.decode(value, { stream: true }));
+    }
+
+    const tail = decoder.decode();
+    if (tail) {
+        onChunk(tail);
+    }
+}
+
+export default function AIPanel({ repository, commit, onOpenFile, visibleFilePaths }: AIPanelProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -40,6 +172,32 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
     const inputRef = useRef<HTMLInputElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
+    const visibleFilePathsRef = useRef<string[] | undefined>(visibleFilePaths);
+    const normalizedVisiblePaths = useMemo(
+        () => (visibleFilePaths || [])
+            .map(path => normalizeFileReference(path) || '')
+            .filter(Boolean),
+        [visibleFilePaths]
+    );
+    const normalizedVisiblePathSet = useMemo(
+        () => new Set(normalizedVisiblePaths),
+        [normalizedVisiblePaths]
+    );
+
+    const canOpenFileReference = useCallback((path: string) => {
+        if (normalizedVisiblePaths.length === 0) return true;
+        if (normalizedVisiblePathSet.has(path)) return true;
+        if (normalizedVisiblePaths.some(visiblePath => visiblePath.startsWith(`${path}/`))) return true;
+        return false;
+    }, [normalizedVisiblePathSet, normalizedVisiblePaths]);
+    const chatStorageKey = useMemo(
+        () => getChatStorageKey(repository.id, commit.sha),
+        [repository.id, commit.sha]
+    );
+
+    useEffect(() => {
+        visibleFilePathsRef.current = visibleFilePaths;
+    }, [visibleFilePaths]);
 
     const explainCommit = useCallback(async () => {
         const settings = getAISettings();
@@ -70,6 +228,7 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
                 type: 'commit',
                 repoId: repository.id,
                 commitSha: commit.sha,
+                visibleFiles: visibleFilePathsRef.current,
                 provider: {
                     type: settings.provider,
                     apiKey: settings.config.apiKey,
@@ -78,25 +237,15 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
                 },
             });
 
-            // Handle streaming response
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('No response body');
-
             setStreaming(true);
             setMessages([{ role: 'assistant', content: '' }]);
 
-            const decoder = new TextDecoder();
             let fullText = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
+            await streamResponseText(response, chunk => {
                 fullText += chunk;
-
                 setMessages([{ role: 'assistant', content: fullText }]);
-            }
+            });
 
             setStreaming(false);
         } catch (err) {
@@ -115,6 +264,7 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
             }
         } finally {
             setLoading(false);
+            setStreaming(false);
             if (timerRef.current) {
                 clearInterval(timerRef.current);
                 timerRef.current = null;
@@ -128,15 +278,36 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-        setMessages([]);
         setError(null);
         setElapsedTime(0);
+
+        const restoredMessages = restoreMessagesFromStorage(chatStorageKey);
+        if (restoredMessages.length > 0) {
+            setMessages(restoredMessages);
+            return;
+        }
+
+        setMessages([]);
 
         // Auto-explain if enabled
         if (getAutoExplainEnabled()) {
             explainCommit();
         }
-    }, [commit.sha, explainCommit]);
+    }, [chatStorageKey, commit.sha, explainCommit]);
+
+    // Persist chat by commit so refresh does not clear context.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+
+        if (messages.length === 0) {
+            sessionStorage.removeItem(chatStorageKey);
+            return;
+        }
+
+        const snapshot = JSON.stringify(messages.slice(-30));
+        sessionStorage.setItem(chatStorageKey, snapshot);
+        localStorage.setItem(chatStorageKey, snapshot);
+    }, [chatStorageKey, messages]);
 
     // Scroll to bottom on new messages
     useEffect(() => {
@@ -171,6 +342,7 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
                 repoId: repository.id,
                 commitSha: commit.sha,
                 question,
+                visibleFiles: visibleFilePathsRef.current,
                 provider: {
                     type: settings.provider,
                     apiKey: settings.config.apiKey,
@@ -179,29 +351,19 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
                 },
             });
 
-            // Handle streaming response
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('No response body');
-
             setStreaming(true);
             setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
 
-            const decoder = new TextDecoder();
             let fullText = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value);
+            await streamResponseText(response, chunk => {
                 fullText += chunk;
-
                 setMessages(prev => {
                     const newMessages = [...prev];
                     newMessages[newMessages.length - 1] = { role: 'assistant', content: fullText };
                     return newMessages;
                 });
-            }
+            });
 
             setStreaming(false);
         } catch (err) {
@@ -289,7 +451,77 @@ export default function AIPanel({ repository, commit }: AIPanelProps) {
                                 <div className={`${styles.messageContent} ${message.role === 'assistant' ? styles.markdown : ''}`}>
                                     {message.role === 'assistant' ? (
                                         message.content ? (
-                                            <ReactMarkdown>{message.content}</ReactMarkdown>
+                                            <ReactMarkdown
+                                                remarkPlugins={[remarkGfm]}
+                                                components={{
+                                                    a: ({ href, children, ...props }) => {
+                                                        const fileReference = extractFileReferenceFromHref(href);
+
+                                                        if (fileReference && onOpenFile && canOpenFileReference(fileReference)) {
+                                                            return (
+                                                                <a
+                                                                    {...props}
+                                                                    href={href}
+                                                                    className={styles.fileLink}
+                                                                    onClick={event => {
+                                                                        event.preventDefault();
+                                                                        onOpenFile(fileReference);
+                                                                    }}
+                                                                    title={`Open ${fileReference}`}
+                                                                >
+                                                                    {children}
+                                                                </a>
+                                                            );
+                                                        }
+
+                                                        const isExternal =
+                                                            typeof href === 'string' &&
+                                                            /^(https?:)?\/\//i.test(href);
+
+                                                        return (
+                                                            <a
+                                                                {...props}
+                                                                href={href}
+                                                                target={isExternal ? '_blank' : undefined}
+                                                                rel={isExternal ? 'noreferrer noopener' : undefined}
+                                                            >
+                                                                {children}
+                                                            </a>
+                                                        );
+                                                    },
+                                                    code: ({ className, children, ...props }) => {
+                                                        const text = Array.isArray(children)
+                                                            ? children.map(child => String(child)).join('')
+                                                            : String(children ?? '');
+                                                        const cleanText = text.trim();
+                                                        const isCodeBlock = Boolean(className) || cleanText.includes('\n');
+                                                        const fileReference = !isCodeBlock
+                                                            ? normalizeFileReference(cleanText)
+                                                            : null;
+
+                                                        if (fileReference && onOpenFile && canOpenFileReference(fileReference)) {
+                                                            return (
+                                                                <button
+                                                                    type="button"
+                                                                    className={styles.inlineFileLink}
+                                                                    onClick={() => onOpenFile(fileReference)}
+                                                                    title={`Open ${fileReference}`}
+                                                                >
+                                                                    <code>{cleanText}</code>
+                                                                </button>
+                                                            );
+                                                        }
+
+                                                        return (
+                                                            <code className={className} {...props}>
+                                                                {children}
+                                                            </code>
+                                                        );
+                                                    },
+                                                }}
+                                            >
+                                                {normalizeAssistantMarkdown(message.content)}
+                                            </ReactMarkdown>
                                         ) : streaming && index === messages.length - 1 ? (
                                             <span className={styles.cursor}>▊</span>
                                         ) : null

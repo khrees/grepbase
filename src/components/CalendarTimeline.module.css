@@ -4,7 +4,7 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-xl);
-    padding: var(--space-md);
+    padding: var(--space-sm);
     animation: fadeIn var(--transition-default) ease;
 }
 
@@ -85,8 +85,8 @@
 .weekdays {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: var(--space-xs);
-    margin-bottom: var(--space-xs);
+    gap: 2px;
+    margin-bottom: 2px;
 }
 
 .weekday {
@@ -103,7 +103,7 @@
 .grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: var(--space-xs);
+    gap: 2px;
 }
 
 /* Day cells */
@@ -115,10 +115,10 @@
     align-items: center;
     justify-content: center;
     gap: 0;
-    padding: 4px;
+    padding: 2px;
     background: var(--bg-tertiary);
-    border: 2px solid transparent;
-    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
     cursor: default;
     transition: all var(--transition-fast);
     font-family: inherit;
@@ -201,14 +201,16 @@
 .commitIndicator {
     display: flex;
     align-items: center;
-    gap: 2px;
-    font-size: 0.7rem;
+    gap: 1px;
+    font-size: 0.6rem;
     color: var(--accent-primary);
     font-weight: 600;
 }
 
 .commitIndicator svg {
     flex-shrink: 0;
+    width: 10px;
+    height: 10px;
 }
 
 /* Loading state */
@@ -233,9 +235,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: var(--space-sm);
-    margin-top: var(--space-lg);
-    padding-top: var(--space-lg);
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
     border-top: 1px solid var(--border-subtle);
 }
 
