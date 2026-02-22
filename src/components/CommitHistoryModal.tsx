@@ -1,7 +1,6 @@
 
-
-import { useState } from 'react';
-import { X, Calendar, Clock, GitCommit } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { X, Clock, GitCommit } from 'lucide-react';
 import styles from './CommitHistoryModal.module.css';
 import CalendarTimeline from './CalendarTimeline';
 import CommitTimeline from './CommitTimeline';
@@ -23,41 +22,31 @@ export default function CommitHistoryModal({
     onSelectCommit
 }: CommitHistoryModalProps) {
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-    const [filteredCommits, setFilteredCommits] = useState<Commit[]>(commits);
 
-    // Reset filter when closed
-    // Reset filter when closed - handled by unmounting in parent now
-    // or we can initialize state based on props if needed, but since it remounts,
-    // useState(commits) is enough.
+    const filteredCommits = useMemo(() => {
+        if (!selectedDate) return commits;
 
-    // Handle day click - filter the list on the right
+        const targetYear = selectedDate.getFullYear();
+        const targetMonth = selectedDate.getMonth();
+        const targetDate = selectedDate.getDate();
+
+        return commits.filter(commit => {
+            const commitDate = new Date(commit.date);
+            return (
+                commitDate.getFullYear() === targetYear &&
+                commitDate.getMonth() === targetMonth &&
+                commitDate.getDate() === targetDate
+            );
+        });
+    }, [commits, selectedDate]);
+
     const handleDayClick = (date: Date, dayCommits: Commit[]) => {
+        if (dayCommits.length === 0) return;
         setSelectedDate(date);
-
-        // Find indices in original array
-        // We actually want to show these commits in the list
-        // Since CommitTimeline takes index based on the full array for selection,
-        // we might just want to scroll to the first one or filter the view?
-        // For simplicity, let's keep showing all commits but scroll to first one of that day
-
-        if (dayCommits.length > 0) {
-            const firstCommit = dayCommits[0];
-            const index = commits.findIndex(c => c.id === firstCommit.id);
-            if (index >= 0) {
-                // We'll close and go there? Or just highlight?
-                // The UX req said "Clicking a commit closes the modal"
-                // But clicking a DAY should probably just filter or highlight?
-                // Let's make clicking a day filter the list on the right to show commits from that day
-                // Then clicking one of those commits selects it and closes modal.
-                setFilteredCommits(dayCommits);
-            }
-        }
     };
 
-    // Clear filter
     const clearFilter = () => {
         setSelectedDate(null);
-        setFilteredCommits(commits);
     };
 
     const handleCommitClick = (commit: Commit) => {
@@ -78,18 +67,13 @@ export default function CommitHistoryModal({
                         <Clock size={24} />
                         Project History
                     </h2>
-                    <button className={styles.closeBtn} onClick={onClose}>
+                    <button type="button" className={styles.closeBtn} onClick={onClose} aria-label="Close history modal">
                         <X size={24} />
                     </button>
                 </div>
 
                 <div className={styles.content}>
-                    {/* Left: Interactive Calendar */}
                     <div className={styles.calendarSection}>
-                        <div className={styles.sectionTitle}>
-                            <Calendar size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'text-bottom' }} />
-                            Timeline Overview
-                        </div>
                         <div className={styles.largeCalendarWrapper}>
                             <CalendarTimeline
                                 commits={commits}
@@ -100,38 +84,29 @@ export default function CommitHistoryModal({
                         </div>
                     </div>
 
-                    {/* Right: Commit List */}
                     <div className={styles.timelineSection}>
-                        <div className={styles.sectionTitle} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>
-                                <GitCommit size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: 'text-bottom' }} />
+                        <div className={`${styles.sectionTitle} ${styles.sectionTitleRow}`}>
+                            <span className={styles.sectionLabel}>
+                                <GitCommit size={16} />
                                 {selectedDate ? selectedDate.toLocaleDateString() : 'All Commits'}
                             </span>
                             {selectedDate && (
                                 <button
-                                    className="btn btn-ghost btn-xs"
+                                    type="button"
+                                    className={styles.clearFilterBtn}
                                     onClick={clearFilter}
-                                    style={{ fontSize: '0.7rem', height: 'auto', padding: '2px 6px' }}
                                 >
                                     Show All
                                 </button>
                             )}
                         </div>
 
-                        <div style={{ flex: 1, overflowY: 'auto' }}>
-                            {/* We need a slightly custom list here because CommitTimeline expects full array and index */}
-                            {/* Let's reuse CommitTimeline but we need to handle the index mapping */}
-
+                        <div className={styles.timelineScroll}>
                             {filteredCommits.length > 0 ? (
                                 <CommitTimeline
                                     commits={filteredCommits}
                                     currentIndex={currentIndex}
-                                    // Note: highlighting current index might be weird if filtered.
-                                    // If the currently selected commit is in the filtered list, it will highlight.
-                                    // But onSelect needs the index in the original commits array for the parent.
                                     onSelect={(clickedIndex) => {
-                                        // clickedIndex here is index in filteredCommits
-                                        // We need finding the real index
                                         const commit = filteredCommits[clickedIndex];
                                         handleCommitClick(commit);
                                     }}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -26,6 +26,7 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
     const [loading, setLoading] = useState(false);
     const [story, setStory] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
     const commitIndexBySha = useMemo(
         () => new Map(commits.map((commit, index) => [commit.sha, index])),
@@ -41,6 +42,12 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
         setStartSha(prev => prev || defaultStart);
         setEndSha(prev => prev || defaultEnd);
     }, [commits, currentIndex]);
+
+    useEffect(() => {
+        return () => {
+            abortControllerRef.current?.abort();
+        };
+    }, []);
 
     const normalizedRange = useMemo(() => {
         const startIndex = commitIndexBySha.get(startSha) ?? 0;
@@ -76,6 +83,9 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
         setLoading(true);
         setError(null);
         setStory('');
+        abortControllerRef.current?.abort();
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
 
         try {
             const response = await api.postStream('/api/explain/story', {
@@ -90,6 +100,8 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
                     baseUrl: settings.config.baseUrl,
                     model: settings.config.model,
                 },
+            }, {
+                signal: abortController.signal,
             });
 
             const reader = response.body?.getReader();
@@ -114,9 +126,14 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
                 setStory(fullText);
             }
         } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                return;
+            }
             setError(err instanceof Error ? err.message : 'Failed to generate story mode.');
         } finally {
-            setLoading(false);
+            if (abortControllerRef.current === abortController) {
+                setLoading(false);
+            }
         }
     }
 
@@ -171,6 +188,7 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
                 </div>
 
                 <button
+                    type="button"
                     className="btn btn-primary"
                     onClick={generateStory}
                     disabled={loading || commits.length === 0}

@@ -57,6 +57,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     // AI Summary state
     const [summary, setSummary] = useState('');
     const [generatingSummary, setGeneratingSummary] = useState(false);
+    const summaryAbortRef = useRef<AbortController | null>(null);
 
     // Load settings from secure storage and start fetching repo
     useEffect(() => {
@@ -74,6 +75,12 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                 secureStorage.setSessionItem(STORAGE_KEY, saved);
             }
         });
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            summaryAbortRef.current?.abort();
+        };
     }, []);
 
     // Start background repo fetch immediately
@@ -214,6 +221,9 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         }
 
         setGeneratingSummary(true);
+        summaryAbortRef.current?.abort();
+        const abortController = new AbortController();
+        summaryAbortRef.current = abortController;
 
         try {
             const currentSettings = settings[activeProvider];
@@ -222,6 +232,8 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                 apiKey: currentSettings.apiKey,
                 model: currentSettings.model,
                 baseUrl: currentSettings.baseUrl,
+            }, {
+                signal: abortController.signal,
             });
 
             // Handle streaming response
@@ -239,12 +251,17 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
             setStep('summary');
         } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                return;
+            }
             console.error('Summary generation failed:', err);
             // Fall back to a basic summary
             setSummary(`**${repoData.name}** is a project by ${repoData.owner}.\n\n${repoData.description || 'No description available.'}\n\n*AI summary generation failed. Click "View Timeline" to explore the commit history.*`);
             setStep('summary');
         } finally {
-            setGeneratingSummary(false);
+            if (summaryAbortRef.current === abortController) {
+                setGeneratingSummary(false);
+            }
         }
     }
 

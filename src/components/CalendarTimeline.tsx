@@ -1,6 +1,5 @@
 
-
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, GitCommit, Loader2 } from 'lucide-react';
 import styles from './CalendarTimeline.module.css';
 
@@ -18,7 +17,7 @@ interface CalendarTimelineProps {
     onDayClick: (date: Date, dayCommits: Commit[]) => void;
     selectedDate: Date | null;
     loading?: boolean;
-    className?: string; // Add optional className
+    className?: string;
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -27,6 +26,35 @@ const MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+interface CalendarDay {
+    key: string;
+    date: Date;
+    isCurrentMonth: boolean;
+    commits: Commit[];
+}
+
+interface CalendarMonth {
+    year: number;
+    month: number;
+}
+
+function toDateKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getCommitIntensity(commitCount: number, maxCommitCount: number): number {
+    if (commitCount === 0 || maxCommitCount === 0) return 0;
+
+    const ratio = commitCount / maxCommitCount;
+    if (ratio < 0.25) return 1;
+    if (ratio < 0.5) return 2;
+    if (ratio < 0.8) return 3;
+    return 4;
+}
+
 export default function CalendarTimeline({
     commits,
     onDayClick,
@@ -34,239 +62,249 @@ export default function CalendarTimeline({
     loading = false,
     className
 }: CalendarTimelineProps) {
-    // Group commits by date
+    const parsedCommits = useMemo(() => {
+        return commits
+            .map(commit => {
+                const parsedDate = new Date(commit.date);
+                return { commit, parsedDate };
+            })
+            .filter(item => !Number.isNaN(item.parsedDate.getTime()));
+    }, [commits]);
+
     const commitsByDate = useMemo(() => {
         const map = new Map<string, Commit[]>();
-        commits.forEach(commit => {
-            const date = new Date(commit.date);
-            const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+
+        parsedCommits.forEach(({ commit, parsedDate }) => {
+            const key = toDateKey(parsedDate);
             if (!map.has(key)) {
                 map.set(key, []);
             }
-            map.get(key)!.push(commit);
+            map.get(key)?.push(commit);
         });
+
         return map;
-    }, [commits]);
+    }, [parsedCommits]);
 
-    // Find the first commit date to start the calendar
-    const firstCommitDate = useMemo(() => {
-        if (commits.length === 0) return new Date();
-        const dates = commits.map(c => new Date(c.date));
-        return new Date(Math.min(...dates.map(d => d.getTime())));
-    }, [commits]);
+    const monthRange = useMemo<CalendarMonth[]>(() => {
+        if (parsedCommits.length === 0) {
+            const now = new Date();
+            return [{
+                year: now.getFullYear(),
+                month: now.getMonth(),
+            }];
+        }
 
-    // Get list of months that have commits (for navigation)
-    const monthsWithCommits = useMemo(() => {
-        const monthSet = new Set<string>();
-        commits.forEach(commit => {
-            const date = new Date(commit.date);
-            monthSet.add(`${date.getFullYear()}-${date.getMonth()}`);
-        });
-        // Convert to sorted array of {year, month} objects
-        return Array.from(monthSet)
-            .map(key => {
-                const [year, month] = key.split('-').map(Number);
-                return { year, month };
-            })
-            .sort((a, b) => {
-                if (a.year !== b.year) return a.year - b.year;
-                return a.month - b.month;
+        const sortedDates = parsedCommits
+            .map(item => item.parsedDate)
+            .sort((a, b) => a.getTime() - b.getTime());
+
+        const first = sortedDates[0];
+        const last = sortedDates[sortedDates.length - 1];
+
+        const months: CalendarMonth[] = [];
+        const cursor = new Date(first.getFullYear(), first.getMonth(), 1);
+        const end = new Date(last.getFullYear(), last.getMonth(), 1);
+
+        while (cursor <= end) {
+            const year = cursor.getFullYear();
+            const month = cursor.getMonth();
+            months.push({
+                year,
+                month,
             });
-    }, [commits]);
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+
+        return months;
+    }, [parsedCommits]);
+
+    const latestMonth = monthRange[monthRange.length - 1];
 
     const [currentMonth, setCurrentMonth] = useState(() => {
-        return new Date(firstCommitDate.getFullYear(), firstCommitDate.getMonth(), 1);
+        if (selectedDate) {
+            return new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+        }
+        return new Date(latestMonth.year, latestMonth.month, 1);
     });
 
-    // Find current month index in monthsWithCommits
-    const currentMonthIndex = useMemo(() => {
-        return monthsWithCommits.findIndex(
-            m => m.year === currentMonth.getFullYear() && m.month === currentMonth.getMonth()
+    const resolvedMonth = useMemo(() => {
+        const hasCurrentMonth = monthRange.some(
+            month => month.year === currentMonth.getFullYear() && month.month === currentMonth.getMonth()
         );
-    }, [currentMonth, monthsWithCommits]);
 
-    // Calendar calculation
-    const calendarDays = useMemo(() => {
-        const year = currentMonth.getFullYear();
-        const month = currentMonth.getMonth();
+        if (hasCurrentMonth) {
+            return currentMonth;
+        }
 
-        // First day of the month
+        return new Date(latestMonth.year, latestMonth.month, 1);
+    }, [currentMonth, latestMonth.month, latestMonth.year, monthRange]);
+
+    const currentMonthIndex = useMemo(() => {
+        return monthRange.findIndex(
+            m => m.year === resolvedMonth.getFullYear() && m.month === resolvedMonth.getMonth()
+        );
+    }, [monthRange, resolvedMonth]);
+
+    const calendarDays = useMemo<CalendarDay[]>(() => {
+        const year = resolvedMonth.getFullYear();
+        const month = resolvedMonth.getMonth();
+
         const firstDay = new Date(year, month, 1);
-        const firstDayOfWeek = firstDay.getDay();
+        const firstDayOffset = firstDay.getDay();
 
-        // Last day of the month
-        const lastDay = new Date(year, month + 1, 0);
-        const daysInMonth = lastDay.getDate();
-
-        // Previous month days to show
-        const prevMonthLastDay = new Date(year, month, 0).getDate();
-
-        const days: { date: Date; isCurrentMonth: boolean; commits: Commit[] }[] = [];
-
-        // Add previous month days
-        for (let i = firstDayOfWeek - 1; i >= 0; i--) {
-            const date = new Date(year, month - 1, prevMonthLastDay - i);
-            const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+        const days: CalendarDay[] = [];
+        for (let i = 0; i < 42; i += 1) {
+            const date = new Date(year, month, i - firstDayOffset + 1);
+            const key = toDateKey(date);
             days.push({
+                key,
                 date,
-                isCurrentMonth: false,
-                commits: commitsByDate.get(key) || [],
-            });
-        }
-
-        // Add current month days
-        for (let day = 1; day <= daysInMonth; day++) {
-            const date = new Date(year, month, day);
-            const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-            days.push({
-                date,
-                isCurrentMonth: true,
-                commits: commitsByDate.get(key) || [],
-            });
-        }
-
-        // Add next month days to fill the grid
-        const remainingDays = 42 - days.length; // 6 weeks * 7 days
-        for (let day = 1; day <= remainingDays; day++) {
-            const date = new Date(year, month + 1, day);
-            const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-            days.push({
-                date,
-                isCurrentMonth: false,
-                commits: commitsByDate.get(key) || [],
+                isCurrentMonth: date.getMonth() === month,
+                commits: commitsByDate.get(key) ?? [],
             });
         }
 
         return days;
-    }, [currentMonth, commitsByDate]);
+    }, [commitsByDate, resolvedMonth]);
 
-    // Navigate to previous month with commits
+    const monthStats = useMemo(() => {
+        const currentMonthDays = calendarDays.filter(day => day.isCurrentMonth);
+        const totalCommits = currentMonthDays.reduce((sum, day) => sum + day.commits.length, 0);
+        const activeDays = currentMonthDays.filter(day => day.commits.length > 0).length;
+        const maxCommitsOnADay = currentMonthDays.reduce(
+            (max, day) => Math.max(max, day.commits.length),
+            0
+        );
+
+        return {
+            totalCommits,
+            activeDays,
+            maxCommitsOnADay,
+        };
+    }, [calendarDays]);
+
+    const selectedKey = selectedDate ? toDateKey(selectedDate) : null;
+    const todayKey = useMemo(() => toDateKey(new Date()), []);
+
     function goToPrevMonth() {
         if (currentMonthIndex > 0) {
-            const prev = monthsWithCommits[currentMonthIndex - 1];
+            const prev = monthRange[currentMonthIndex - 1];
             setCurrentMonth(new Date(prev.year, prev.month, 1));
         }
     }
 
-    // Navigate to next month with commits
     function goToNextMonth() {
-        if (currentMonthIndex < monthsWithCommits.length - 1) {
-            const next = monthsWithCommits[currentMonthIndex + 1];
+        if (currentMonthIndex >= 0 && currentMonthIndex < monthRange.length - 1) {
+            const next = monthRange[currentMonthIndex + 1];
             setCurrentMonth(new Date(next.year, next.month, 1));
         }
     }
 
-    function goToFirstCommit() {
-        if (monthsWithCommits.length > 0) {
-            const first = monthsWithCommits[0];
-            setCurrentMonth(new Date(first.year, first.month, 1));
-        }
+    function goToLatestMonth() {
+        setCurrentMonth(new Date(latestMonth.year, latestMonth.month, 1));
     }
 
     const canGoPrev = currentMonthIndex > 0;
-    const canGoNext = currentMonthIndex < monthsWithCommits.length - 1;
-
-    function isSelected(date: Date) {
-        if (!selectedDate) return false;
-        return (
-            date.getFullYear() === selectedDate.getFullYear() &&
-            date.getMonth() === selectedDate.getMonth() &&
-            date.getDate() === selectedDate.getDate()
-        );
-    }
-
-    function isToday(date: Date) {
-        const today = new Date();
-        return (
-            date.getFullYear() === today.getFullYear() &&
-            date.getMonth() === today.getMonth() &&
-            date.getDate() === today.getDate()
-        );
-    }
-
-    // Calculate commit intensity for visual heat map (1-4 levels)
-    function getCommitIntensity(commitCount: number): number {
-        if (commitCount === 0) return 0;
-        if (commitCount === 1) return 1;
-        if (commitCount <= 3) return 2;
-        if (commitCount <= 6) return 3;
-        return 4;
-    }
+    const canGoNext = currentMonthIndex >= 0 && currentMonthIndex < monthRange.length - 1;
+    const isOnLatestMonth =
+        resolvedMonth.getFullYear() === latestMonth.year &&
+        resolvedMonth.getMonth() === latestMonth.month;
 
     return (
-        <div className={`${styles.calendar} ${className || ''}`}>
-            {/* Header */}
+        <div className={`${styles.calendar} ${className ?? ''}`}>
             <div className={styles.header}>
-                <button
-                    className={`${styles.navBtn} ${!canGoPrev ? styles.navBtnDisabled : ''}`}
-                    onClick={goToPrevMonth}
-                    disabled={!canGoPrev}
-                    aria-label="Previous month with commits"
-                >
-                    <ChevronLeft size={18} />
-                </button>
-
                 <div className={styles.headerCenter}>
                     <h2 className={styles.monthYear}>
-                        {MONTHS[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                        {MONTHS[resolvedMonth.getMonth()]} {resolvedMonth.getFullYear()}
                     </h2>
-                    <button
-                        className={styles.firstCommitBtn}
-                        onClick={goToFirstCommit}
-                    >
-                        <GitCommit size={14} />
-                        First Commit
-                    </button>
+                    <p className={styles.monthMeta}>
+                        {monthStats.totalCommits} commit{monthStats.totalCommits === 1 ? '' : 's'}
+                        {' '}across {monthStats.activeDays} active day{monthStats.activeDays === 1 ? '' : 's'}
+                    </p>
                 </div>
 
-                <button
-                    className={`${styles.navBtn} ${!canGoNext ? styles.navBtnDisabled : ''}`}
-                    onClick={goToNextMonth}
-                    disabled={!canGoNext}
-                    aria-label="Next month with commits"
-                >
-                    <ChevronRight size={18} />
-                </button>
+                <div className={styles.headerActions}>
+                    <button
+                        type="button"
+                        className={styles.latestBtn}
+                        onClick={goToLatestMonth}
+                        disabled={isOnLatestMonth}
+                        aria-label="Jump to latest commit month"
+                    >
+                        Latest
+                    </button>
+
+                    <button
+                        type="button"
+                        className={styles.navBtn}
+                        onClick={goToPrevMonth}
+                        disabled={!canGoPrev}
+                        aria-label="Previous month"
+                    >
+                        <ChevronLeft size={17} />
+                    </button>
+                    <button
+                        type="button"
+                        className={styles.navBtn}
+                        onClick={goToNextMonth}
+                        disabled={!canGoNext}
+                        aria-label="Next month"
+                    >
+                        <ChevronRight size={17} />
+                    </button>
+                </div>
             </div>
 
-            {/* Weekday headers */}
             <div className={styles.weekdays}>
                 {WEEKDAYS.map(day => (
-                    <div key={day} className={styles.weekday}>
+                    <div key={day} className={styles.weekday} role="presentation">
                         {day}
                     </div>
                 ))}
             </div>
 
-            {/* Calendar grid */}
-            <div className={styles.grid}>
-                {calendarDays.map((day, index) => {
+            <div className={styles.grid} aria-label="Commit activity calendar">
+                {calendarDays.map(day => {
                     const hasCommits = day.commits.length > 0;
-                    const intensity = getCommitIntensity(day.commits.length);
+                    const intensity = getCommitIntensity(day.commits.length, monthStats.maxCommitsOnADay);
+                    const isSelected = selectedKey === day.key;
+                    const isToday = todayKey === day.key;
+                    const dayLabel = day.date.toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                    });
 
                     return (
                         <button
-                            key={index}
+                            key={day.key}
+                            type="button"
                             className={`
                                 ${styles.day}
                                 ${!day.isCurrentMonth ? styles.dayOutside : ''}
                                 ${hasCommits ? styles.dayHasCommits : ''}
                                 ${hasCommits ? styles[`intensity${intensity}`] : ''}
-                                ${isSelected(day.date) ? styles.daySelected : ''}
-                                ${isToday(day.date) ? styles.dayToday : ''}
+                                ${isSelected ? styles.daySelected : ''}
+                                ${isToday ? styles.dayToday : ''}
                             `}
-                            onClick={() => hasCommits && onDayClick(day.date, day.commits)}
+                            onClick={() => {
+                                if (!hasCommits || loading) return;
+                                onDayClick(day.date, day.commits);
+                            }}
                             disabled={!hasCommits || loading}
-                            aria-label={`${day.date.toDateString()}${hasCommits ? `, ${day.commits.length} commit(s)` : ''}`}
+                            aria-pressed={isSelected && hasCommits}
+                            aria-label={`${dayLabel}${hasCommits ? `, ${day.commits.length} commit${day.commits.length === 1 ? '' : 's'}` : ', no commits'}`}
+                            title={`${dayLabel}${hasCommits ? ` • ${day.commits.length} commit${day.commits.length === 1 ? '' : 's'}` : ''}`}
                         >
                             <span className={styles.dayNumber}>{day.date.getDate()}</span>
                             {hasCommits && (
                                 <div className={styles.commitIndicator}>
-                                    <GitCommit size={12} />
+                                    <GitCommit size={11} />
                                     <span>{day.commits.length}</span>
                                 </div>
                             )}
-                            {loading && isSelected(day.date) && (
+                            {loading && isSelected && (
                                 <Loader2 size={16} className={styles.dayLoader} />
                             )}
                         </button>
@@ -274,9 +312,8 @@ export default function CalendarTimeline({
                 })}
             </div>
 
-            {/* Legend */}
             <div className={styles.legend}>
-                <span className={styles.legendLabel}>Activity:</span>
+                <span className={styles.legendLabel}>Low</span>
                 <div className={styles.legendScale}>
                     <div className={`${styles.legendBox} ${styles.intensity0}`} />
                     <div className={`${styles.legendBox} ${styles.intensity1}`} />
@@ -284,7 +321,7 @@ export default function CalendarTimeline({
                     <div className={`${styles.legendBox} ${styles.intensity3}`} />
                     <div className={`${styles.legendBox} ${styles.intensity4}`} />
                 </div>
-                <span className={styles.legendLabel}>More</span>
+                <span className={styles.legendLabel}>High</span>
             </div>
         </div>
     );

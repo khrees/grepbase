@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     BookOpen, Home, Settings, ArrowLeft, Loader2, GitCommit,
@@ -32,6 +32,8 @@ interface Commit {
 export default function TimelinePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
     const router = useRouter();
+    const summaryRequestIdRef = useRef(0);
+    const summaryAbortControllerRef = useRef<AbortController | null>(null);
 
     const [repository, setRepository] = useState<Repository | null>(null);
     const [commits, setCommits] = useState<Commit[]>([]);
@@ -64,23 +66,70 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
         fetchData();
     }, [id]);
 
-    async function handleDayClick(date: Date, dayCommits: Commit[]) {
+    const totalCommits = commits.length;
+    const activeDays = useMemo(() => {
+        const dateSet = new Set<string>();
+        commits.forEach(commit => {
+            const date = new Date(commit.date);
+            if (!Number.isNaN(date.getTime())) {
+                dateSet.add(
+                    `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+                );
+            }
+        });
+        return dateSet.size;
+    }, [commits]);
+    const uniqueAuthors = useMemo(
+        () => new Set(commits.map(commit => commit.authorName || 'Unknown')).size,
+        [commits]
+    );
+    const latestCommitDate = useMemo(() => {
+        if (commits.length === 0) return null;
+
+        const timestamps = commits
+            .map(commit => new Date(commit.date).getTime())
+            .filter(timestamp => !Number.isNaN(timestamp));
+
+        if (timestamps.length === 0) return null;
+        return new Date(Math.max(...timestamps));
+    }, [commits]);
+
+    const cancelSummaryRequest = useCallback(() => {
+        summaryAbortControllerRef.current?.abort();
+        summaryAbortControllerRef.current = null;
+        summaryRequestIdRef.current += 1;
+        setSummaryLoading(false);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            summaryAbortControllerRef.current?.abort();
+        };
+    }, []);
+
+    const handleDayClick = useCallback(async (date: Date, dayCommits: Commit[]) => {
+        cancelSummaryRequest();
+
+        const requestId = summaryRequestIdRef.current + 1;
+        summaryRequestIdRef.current = requestId;
+        const abortController = new AbortController();
+        summaryAbortControllerRef.current = abortController;
+
         setSelectedDate(date);
         setSelectedCommits(dayCommits);
         setShowDayPanel(true);
         setDaySummary('');
 
-        // Generate AI summary for the day's commits
         const aiSettings = getAISettings();
         if (!aiSettings) {
             setDaySummary('Configure AI settings to generate commit summaries.');
+            setSummaryLoading(false);
             return;
         }
 
         setSummaryLoading(true);
 
         try {
-            // Generate summary for all commits on this day
             const response = await api.postStream('/api/explain/day-summary', {
                 repoId: Number(id),
                 provider: {
@@ -98,34 +147,60 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                 })),
                 projectName: repository?.name,
                 projectOwner: repository?.owner,
+            }, {
+                signal: abortController.signal,
             });
 
-            // Handle streaming response
             const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
+            if (!reader) {
+                throw new Error('No response stream from day summary endpoint');
+            }
 
-            if (reader) {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    const text = decoder.decode(value, { stream: true });
-                    setDaySummary(prev => prev + text);
+            const decoder = new TextDecoder();
+            let fullText = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                fullText += decoder.decode(value, { stream: true });
+                if (summaryRequestIdRef.current !== requestId) {
+                    return;
                 }
+                setDaySummary(fullText);
+            }
+
+            const tail = decoder.decode();
+            if (tail) {
+                fullText += tail;
+            }
+
+            if (summaryRequestIdRef.current === requestId) {
+                setDaySummary(fullText);
             }
         } catch (err) {
-            console.error('Failed to generate day summary:', err);
-            setDaySummary('Failed to generate AI summary. Please try again.');
-        } finally {
-            setSummaryLoading(false);
-        }
-    }
+            if (err instanceof Error && err.name === 'AbortError') {
+                return;
+            }
 
-    function closeDayPanel() {
+            console.error('Failed to generate day summary:', err);
+            if (summaryRequestIdRef.current === requestId) {
+                setDaySummary('Failed to generate AI summary. Please try again.');
+            }
+        } finally {
+            if (summaryRequestIdRef.current === requestId) {
+                setSummaryLoading(false);
+            }
+        }
+    }, [cancelSummaryRequest, id, repository?.name, repository?.owner]);
+
+    const closeDayPanel = useCallback(() => {
+        cancelSummaryRequest();
         setShowDayPanel(false);
         setSelectedDate(null);
         setSelectedCommits([]);
         setDaySummary('');
-    }
+    }, [cancelSummaryRequest]);
 
     if (loading) {
         return (
@@ -140,7 +215,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
         return (
             <div className={styles.errorState}>
                 <p>{error}</p>
-                <button className="btn btn-primary" onClick={() => router.push('/')}>
+                <button type="button" className="btn btn-primary" onClick={() => router.push('/')}>
                     Go Home
                 </button>
             </div>
@@ -151,7 +226,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
         return (
             <div className={styles.errorState}>
                 <p>No commits found for this repository.</p>
-                <button className="btn btn-primary" onClick={() => router.push('/')}>
+                <button type="button" className="btn btn-primary" onClick={() => router.push('/')}>
                     Go Home
                 </button>
             </div>
@@ -160,13 +235,18 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
 
     return (
         <div className={styles.container}>
-            {/* Header */}
             <header className={styles.header}>
                 <div className={styles.headerLeft}>
-                    <button className="btn btn-ghost" onClick={() => router.push('/')}>
+                    <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => router.push('/')}
+                        aria-label="Go to home page"
+                    >
                         <Home size={18} />
                     </button>
                     <button
+                        type="button"
                         className="btn btn-ghost"
                         onClick={() => router.push(`/explore/${id}`)}
                     >
@@ -187,24 +267,56 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                 </div>
 
                 <div className={styles.headerRight}>
-                    <button className="btn btn-ghost" onClick={() => setShowSettings(true)}>
+                    <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setShowSettings(true)}
+                        aria-label="Open AI settings"
+                    >
                         <Settings size={18} />
                     </button>
                 </div>
             </header>
 
-            {/* Main Content */}
             <main className={styles.main}>
-                <div className={styles.calendarContainer}>
-                    <CalendarTimeline
-                        commits={commits}
-                        onDayClick={handleDayClick}
-                        selectedDate={selectedDate}
-                        loading={summaryLoading}
-                    />
-                </div>
+                <section className={styles.calendarWorkspace}>
+                    <div className={styles.overviewGrid}>
+                        <article className={styles.overviewCard}>
+                            <span className={styles.overviewLabel}>Total commits</span>
+                            <strong className={styles.overviewValue}>{totalCommits}</strong>
+                        </article>
+                        <article className={styles.overviewCard}>
+                            <span className={styles.overviewLabel}>Active days</span>
+                            <strong className={styles.overviewValue}>{activeDays}</strong>
+                        </article>
+                        <article className={styles.overviewCard}>
+                            <span className={styles.overviewLabel}>Authors</span>
+                            <strong className={styles.overviewValue}>{uniqueAuthors}</strong>
+                        </article>
+                        <article className={styles.overviewCard}>
+                            <span className={styles.overviewLabel}>Latest commit</span>
+                            <strong className={styles.overviewValueSmall}>
+                                {latestCommitDate
+                                    ? latestCommitDate.toLocaleDateString('en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        year: 'numeric',
+                                    })
+                                    : 'Unknown'}
+                            </strong>
+                        </article>
+                    </div>
 
-                {/* Day Summary Panel */}
+                    <div className={styles.calendarContainer}>
+                        <CalendarTimeline
+                            commits={commits}
+                            onDayClick={handleDayClick}
+                            selectedDate={selectedDate}
+                            loading={summaryLoading}
+                        />
+                    </div>
+                </section>
+
                 {showDayPanel && (
                     <aside className={styles.dayPanel}>
                         <div className={styles.dayPanelHeader}>
@@ -222,6 +334,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                                 </span>
                             </div>
                             <button
+                                type="button"
                                 className={styles.dayPanelClose}
                                 onClick={closeDayPanel}
                                 aria-label="Close panel"
@@ -230,7 +343,6 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                             </button>
                         </div>
 
-                        {/* Commit list */}
                         <div className={styles.commitList}>
                             {selectedCommits.map(commit => (
                                 <div key={commit.id} className={styles.commitItem}>
@@ -247,17 +359,22 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                                         <User size={12} />
                                         {commit.authorName || 'Unknown'}
                                     </span>
+                                    <span className={styles.commitTime}>
+                                        {new Date(commit.date).toLocaleTimeString('en-US', {
+                                            hour: 'numeric',
+                                            minute: '2-digit',
+                                        })}
+                                    </span>
                                 </div>
                             ))}
                         </div>
 
-                        {/* AI Summary */}
                         <div className={styles.aiSummarySection}>
                             <div className={styles.aiSummaryHeader}>
                                 <Sparkles size={16} />
                                 <span>AI Summary</span>
                             </div>
-                            <div className={styles.aiSummaryContent}>
+                            <div className={styles.aiSummaryContent} aria-live="polite">
                                 {summaryLoading ? (
                                     <div className={styles.summaryLoading}>
                                         <Loader2 size={20} className={styles.spinner} />
@@ -266,7 +383,9 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                                 ) : daySummary ? (
                                     <div className={styles.summaryText}>
                                         {daySummary.split('\n').map((line, i) => (
-                                            line.trim() ? <p key={i}>{line}</p> : <br key={i} />
+                                            <p key={`summary-line-${i}`} className={styles.summaryLine}>
+                                                {line.trim() ? line : '\u00A0'}
+                                            </p>
                                         ))}
                                     </div>
                                 ) : (
@@ -280,7 +399,6 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                 )}
             </main>
 
-            {/* Settings Modal */}
             <SettingsModal
                 isOpen={showSettings}
                 onClose={() => setShowSettings(false)}

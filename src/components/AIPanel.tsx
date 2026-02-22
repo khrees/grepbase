@@ -202,7 +202,8 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-        abortControllerRef.current = new AbortController();
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
 
         setLoading(true);
         setError(null);
@@ -227,6 +228,8 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                     baseUrl: settings.config.baseUrl,
                     model: settings.config.model,
                 },
+            }, {
+                signal: abortController.signal,
             });
 
             setStreaming(true);
@@ -326,7 +329,8 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-        abortControllerRef.current = new AbortController();
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
 
         try {
             const response = await api.postStream('/api/explain/question', {
@@ -341,6 +345,8 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                     baseUrl: settings.config.baseUrl,
                     model: settings.config.model,
                 },
+            }, {
+                signal: abortController.signal,
             });
 
             setStreaming(true);

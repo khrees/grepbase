@@ -17,6 +17,7 @@
     "@ai-sdk/google": "^3.0.30",
     "@ai-sdk/openai": "^3.0.30",
     "@ai-sdk/openai-compatible": "^2.0.30",
+    "@ai-sdk/react": "^3.0.99",
     "@vercel/functions": "^3.4.2",
     "ai": "^6.0.97",
     "clsx": "^2.1.1",

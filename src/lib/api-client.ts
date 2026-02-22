@@ -74,15 +74,18 @@ export class APIClient {
   /**
    * POST request that returns a streaming response
    */
-  async postStream(path: string, body?: unknown): Promise<Response> {
+  async postStream(path: string, body?: unknown, options?: RequestInit): Promise<Response> {
     const url = `${this.baseURL}${path}`;
+    const { headers: optionHeaders, ...restOptions } = options || {};
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...optionHeaders,
       },
       body: body ? JSON.stringify(body) : undefined,
+      ...restOptions,
     });
 
     if (!response.ok) {
@@ -111,5 +114,5 @@ export const api = {
   post: <T>(path: string, body?: unknown) => apiClient.post<T>(path, body),
   put: <T>(path: string, body?: unknown) => apiClient.put<T>(path, body),
   delete: <T>(path: string) => apiClient.delete<T>(path),
-  postStream: (path: string, body?: unknown) => apiClient.postStream(path, body),
+  postStream: (path: string, body?: unknown, options?: RequestInit) => apiClient.postStream(path, body, options),
 };

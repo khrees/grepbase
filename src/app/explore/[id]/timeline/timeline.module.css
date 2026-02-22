@@ -1,19 +1,25 @@
-/* Timeline Page Styles */
-
 .container {
-    min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
+    background:
+        radial-gradient(circle at 8% 16%, rgba(38, 152, 255, 0.22), rgba(38, 152, 255, 0) 22%),
+        radial-gradient(circle at 86% 80%, rgba(25, 188, 255, 0.16), rgba(25, 188, 255, 0) 26%),
+        var(--bg-primary);
 }
 
-/* Header */
 .header {
+    position: sticky;
+    top: 0;
+    z-index: 12;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-md) var(--space-xl);
-    border-bottom: 2px solid var(--border-subtle);
-    background: var(--bg-primary);
+    gap: var(--space-md);
+    padding: clamp(10px, 2.4vw, 16px) clamp(12px, 3.4vw, 34px);
+    border-bottom: 1px solid rgba(145, 174, 210, 0.2);
+    background: rgba(5, 10, 19, 0.8);
+    backdrop-filter: blur(12px);
 }
 
 .headerLeft,
@@ -27,64 +33,291 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-xs);
+    gap: 4px;
+    min-width: 0;
 }
 
 .repoInfo {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
+    color: #f0f8ff;
 }
 
 .repoInfo svg {
-    color: var(--accent-primary);
+    color: #31bcff;
 }
 
 .repoName {
-    font-weight: 600;
-    color: var(--text-primary);
+    font-weight: 700;
+    font-size: clamp(0.82rem, 0.15vw + 0.8rem, 0.95rem);
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .headerBadge {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-xs);
-    padding: 2px 8px;
-    font-size: 0.75rem;
-    color: var(--accent-primary);
-    background: rgba(0, 112, 243, 0.1);
-    border-radius: 0.25rem;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #bde9ff;
+    background: rgba(49, 188, 255, 0.14);
+    border: 1px solid rgba(49, 188, 255, 0.3);
 }
 
-/* Main */
 .main {
     flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+    gap: clamp(14px, 2.6vw, 24px);
+    padding: clamp(12px, 3.1vw, 28px);
+}
+
+.calendarWorkspace {
+    min-width: 0;
     display: flex;
-    gap: var(--space-xl);
-    padding: var(--space-xl);
-    overflow: hidden;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.overviewGrid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.overviewCard {
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(145, 174, 210, 0.2);
+    background: linear-gradient(165deg, rgba(15, 29, 52, 0.72), rgba(7, 14, 26, 0.72));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.overviewLabel {
+    display: block;
+    color: #90a6be;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.overviewValue,
+.overviewValueSmall {
+    display: block;
+    margin-top: 8px;
+    color: #e8f4ff;
+    font-weight: 700;
+}
+
+.overviewValue {
+    font-size: clamp(1.05rem, 0.5vw + 0.96rem, 1.34rem);
+}
+
+.overviewValueSmall {
+    font-size: clamp(0.86rem, 0.4vw + 0.8rem, 1rem);
+    line-height: 1.4;
 }
 
 .calendarContainer {
-    flex: 1;
-    max-width: 800px;
-    margin: 0 auto;
+    min-height: 0;
 }
 
-/* Loading/Error States */
 .loadingState,
 .errorState {
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
     gap: var(--space-lg);
     color: var(--text-secondary);
 }
 
 .spinner {
     animation: spin 1s linear infinite;
+}
+
+.dayPanel {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-radius: 16px;
+    border: 1px solid rgba(145, 174, 210, 0.24);
+    background: linear-gradient(180deg, rgba(8, 15, 28, 0.94), rgba(5, 10, 18, 0.9));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        0 20px 30px rgba(0, 0, 0, 0.34);
+    overflow: hidden;
+    animation: slideIn var(--transition-default) ease;
+}
+
+.dayPanelHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 16px;
+    border-bottom: 1px solid rgba(145, 174, 210, 0.2);
+}
+
+.dayPanelTitle {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #edf8ff;
+}
+
+.dayPanelSub {
+    margin-top: 4px;
+    display: inline-block;
+    font-size: 0.78rem;
+    color: #8ea4bd;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.dayPanelClose {
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(145, 174, 210, 0.2);
+    border-radius: 9px;
+    background: rgba(10, 20, 35, 0.62);
+    color: #9fb4cb;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+}
+
+.dayPanelClose:hover {
+    color: #f2fbff;
+    border-color: rgba(49, 188, 255, 0.48);
+    background: rgba(49, 188, 255, 0.2);
+}
+
+.dayPanelClose:focus-visible {
+    outline: 2px solid rgba(49, 188, 255, 0.8);
+    outline-offset: 1px;
+}
+
+.commitList {
+    max-height: min(44vh, 340px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border-bottom: 1px solid rgba(145, 174, 210, 0.15);
+}
+
+.commitItem {
+    border: 1px solid rgba(145, 174, 210, 0.16);
+    border-radius: 12px;
+    padding: 10px;
+    background: rgba(16, 31, 53, 0.6);
+}
+
+.commitItemHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    color: #75ccff;
+}
+
+.commitSha {
+    font-size: 0.72rem;
+    color: #b9e9ff;
+    background: rgba(49, 188, 255, 0.12);
+    border: 1px solid rgba(49, 188, 255, 0.24);
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.commitMessage {
+    margin: 0;
+    font-size: 0.84rem;
+    color: #d7e6f5;
+    line-height: 1.45;
+}
+
+.commitAuthor,
+.commitTime {
+    margin-top: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #8ea6c1;
+    font-size: 0.72rem;
+}
+
+.commitTime {
+    margin-left: 10px;
+}
+
+.aiSummarySection {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.aiSummaryHeader {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 14px;
+    color: #8dd9ff;
+    font-size: 0.82rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 700;
+    border-bottom: 1px solid rgba(145, 174, 210, 0.15);
+}
+
+.aiSummaryContent {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 14px;
+}
+
+.summaryLoading {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #a1bad2;
+    font-size: 0.86rem;
+}
+
+.summaryText {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.summaryLine {
+    margin: 0;
+    color: #cadced;
+    line-height: 1.58;
+    font-size: 0.86rem;
+}
+
+.summaryPlaceholder {
+    margin: 0;
+    color: #839ab3;
+    font-size: 0.86rem;
 }
 
 @keyframes spin {
@@ -97,24 +330,10 @@
     }
 }
 
-/* Day Panel */
-.dayPanel {
-    width: 400px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-default);
-    border-radius: 0.5rem;
-    overflow: hidden;
-    animation: slideIn var(--transition-default) ease;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-}
-
 @keyframes slideIn {
     from {
         opacity: 0;
-        transform: translateX(20px);
+        transform: translateX(18px);
     }
 
     to {
@@ -123,176 +342,53 @@
     }
 }
 
-.dayPanelHeader {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: var(--space-lg);
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-secondary);
-}
-
-.dayPanelTitle {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0 0 var(--space-xs);
-    color: var(--text-primary);
-}
-
-.dayPanelSub {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-}
-
-.dayPanelClose {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    color: var(--text-muted);
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.dayPanelClose:hover {
-    color: var(--text-primary);
-    background: var(--bg-tertiary);
-}
-
-/* Commit List */
-.commitList {
-    padding: var(--space-md);
-    max-height: 300px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    border-bottom: 1px solid var(--border-subtle);
-}
-
-.commitItem {
-    padding: var(--space-sm);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
-    transition: background var(--transition-fast);
-}
-
-.commitItem:hover {
-    background: var(--bg-elevated);
-}
-
-.commitItemHeader {
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    margin-bottom: var(--space-xs);
-}
-
-.commitItemHeader svg {
-    color: var(--accent-primary);
-}
-
-.commitSha {
-    font-size: 0.75rem;
-    color: var(--accent-primary);
-    background: rgba(0, 112, 243, 0.1);
-    padding: 2px 6px;
-    border-radius: 0.25rem;
-}
-
-.commitMessage {
-    font-size: 0.9rem;
-    color: var(--text-primary);
-    margin: 0 0 var(--space-xs);
-    line-height: 1.4;
-}
-
-.commitAuthor {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-/* AI Summary Section */
-.aiSummarySection {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-.aiSummaryHeader {
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    padding: var(--space-md);
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--accent-primary);
-    border-bottom: 1px solid var(--border-subtle);
-}
-
-.aiSummaryContent {
-    flex: 1;
-    padding: var(--space-md);
-    overflow-y: auto;
-}
-
-.summaryLoading {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    color: var(--text-muted);
-    font-size: 0.9rem;
-}
-
-.summaryText {
-    line-height: 1.7;
-}
-
-.summaryText p {
-    margin: 0 0 var(--space-sm);
-    color: var(--text-secondary);
-}
-
-.summaryPlaceholder {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    font-style: italic;
-}
-
-/* Responsive */
-@media (max-width: 1024px) {
+@media (max-width: 1220px) {
     .main {
-        flex-direction: column;
-    }
-
-    .calendarContainer {
-        max-width: 100%;
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .dayPanel {
-        width: 100%;
-        max-height: 50vh;
+        max-height: 60dvh;
+    }
+}
+
+@media (max-width: 900px) {
+    .overviewGrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .header {
+        flex-wrap: wrap;
     }
 }
 
 @media (max-width: 640px) {
-    .header {
-        padding: var(--space-sm) var(--space-md);
+    .headerCenter {
+        order: 3;
+        width: 100%;
+        align-items: flex-start;
     }
 
-    .headerCenter {
-        display: none;
+    .repoName {
+        max-width: 80vw;
     }
 
     .main {
-        padding: var(--space-md);
+        padding: 10px;
+    }
+
+    .overviewGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .commitList {
+        max-height: 40dvh;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .dayPanel,
+    .spinner {
+        animation: none !important;
     }
 }

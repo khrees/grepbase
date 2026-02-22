@@ -6,7 +6,7 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.75);
+    background: rgba(7, 13, 24, 0.78);
     backdrop-filter: blur(4px);
     z-index: 100;
     display: flex;
@@ -16,14 +16,14 @@
 }
 
 .modal {
-    background: var(--bg-secondary);
+    background: linear-gradient(155deg, #101f35 0%, #0d1a2f 58%, #0f2037 100%);
     width: 90vw;
     height: 85vh;
     border-radius: var(--radius-xl);
-    border: 1px solid var(--border-default);
+    border: 1px solid rgba(129, 183, 214, 0.34);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 24px 44px rgba(7, 14, 26, 0.5);
     animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     overflow: hidden;
 }
@@ -33,14 +33,14 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-lg) var(--space-xl);
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-secondary);
+    border-bottom: 1px solid rgba(129, 183, 214, 0.24);
+    background: rgba(19, 36, 58, 0.92);
 }
 
 .header h2 {
     font-size: 1.25rem;
     font-weight: 600;
-    color: var(--text-primary);
+    color: #ecf8ff;
     margin: 0;
     display: flex;
     align-items: center;
@@ -56,31 +56,36 @@
     border-radius: var(--radius-md);
     border: none;
     background: transparent;
-    color: var(--text-secondary);
+    color: #9ec0d9;
     cursor: pointer;
     transition: all var(--transition-fast);
 }
 
 .closeBtn:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    background: rgba(78, 200, 255, 0.18);
+    color: #f2fbff;
+}
+
+.closeBtn:focus-visible {
+    outline: 2px solid rgba(0, 112, 243, 0.8);
+    outline-offset: 2px;
 }
 
 .content {
     flex: 1;
     display: flex;
     overflow: hidden;
-    background: var(--bg-primary);
+    background: #10213a;
 }
 
 .calendarSection {
     flex: 2;
-    padding: var(--space-xl);
-    border-right: 1px solid var(--border-subtle);
-    overflow-y: auto;
+    padding: var(--space-sm);
+    border-right: 1px solid rgba(129, 183, 214, 0.2);
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    gap: var(--space-lg);
+    min-height: 0;
 }
 
 .timelineSection {
@@ -88,8 +93,8 @@
     min-width: 350px;
     display: flex;
     flex-direction: column;
-    background: var(--bg-secondary);
-    border-left: 1px solid var(--border-subtle);
+    background: linear-gradient(180deg, rgba(18, 36, 59, 0.95), rgba(14, 28, 46, 0.95));
+    border-left: 1px solid rgba(129, 183, 214, 0.2);
 }
 
 .sectionTitle {
@@ -97,15 +102,60 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: #89abc4;
     padding: var(--space-md) var(--space-lg);
-    border-bottom: 1px solid var(--border-subtle);
+    border-bottom: 1px solid rgba(129, 183, 214, 0.2);
+}
+
+.sectionTitleRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.sectionLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.clearFilterBtn {
+    border: 1px solid rgba(129, 183, 214, 0.34);
+    background: rgba(24, 53, 83, 0.62);
+    color: #a8c8dd;
+    border-radius: var(--radius-sm);
+    height: 26px;
+    padding: 0 8px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.clearFilterBtn:hover {
+    border-color: rgba(78, 200, 255, 0.62);
+    color: #f2fbff;
+    background: rgba(78, 200, 255, 0.18);
+}
+
+.clearFilterBtn:focus-visible {
+    outline: 2px solid rgba(0, 112, 243, 0.75);
+    outline-offset: 2px;
+}
+
+.timelineScroll {
+    flex: 1;
+    overflow-y: auto;
 }
 
 .timelineWarning {
     padding: var(--space-lg);
     text-align: center;
-    color: var(--text-secondary);
+    color: #a6c3d8;
     font-style: italic;
 }
 
@@ -133,16 +183,36 @@
 
 /* Make calendar fit in modal - we pass this class to the component */
 .largeCalendar {
+    --calendar-padding: clamp(8px, 1.3vw, 12px);
+    --calendar-day-min-height: clamp(42px, 5.5vw, 56px);
+
+    flex: 1;
     width: 100%;
-    max-width: 500px;
-    height: auto;
-    margin: 0 auto;
-    align-self: center;
+    max-width: none;
+    height: 100%;
+    margin: 0;
+    align-self: stretch;
+    border: none;
+    background: transparent;
 }
 
-.largeCalendar :global(.CalendarTimeline_calendar__2nO9e) {
-    /* valid way if targeting generated class, but let's just style the container we passed */
-    border: none;
-    padding: 0;
-    background: transparent;
+.largeCalendarWrapper {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+@media (max-width: 1100px) {
+    .content {
+        flex-direction: column;
+    }
+
+    .calendarSection {
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .timelineSection {
+        min-width: 0;
+    }
 }
