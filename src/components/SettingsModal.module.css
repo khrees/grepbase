@@ -16,10 +16,10 @@
     max-height: 85vh;
     display: flex;
     flex-direction: column;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-xl);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    border-radius: 0.5rem;
+    box-shadow: 0 32px 64px rgba(0, 0, 0, 0.6);
     animation: slideUp 0.3s ease;
 }
 
@@ -69,25 +69,22 @@
     margin-bottom: var(--space-xl);
 }
 
-/* Tabs */
 .tabs {
     display: flex;
-    gap: var(--space-xs);
+    gap: var(--space-md);
     margin-bottom: var(--space-lg);
-    background: var(--bg-tertiary);
-    padding: var(--space-xs);
-    border-radius: var(--radius-md);
+    border-bottom: 1px solid var(--border-subtle);
 }
 
 .tab {
     flex: 1;
     padding: var(--space-md) var(--space-md);
-    font-size: 0.9rem;
-    font-weight: 600;
+    font-size: 0.85rem;
+    font-weight: 500;
     font-family: inherit;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-bottom: 2px solid transparent;
     color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-fast);
@@ -98,9 +95,8 @@
 }
 
 .tabActive {
-    background: var(--accent-primary);
-    color: white;
-    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
 }
 
 /* Form */
@@ -230,8 +226,9 @@
     justify-content: space-between;
     align-items: center;
     padding: var(--space-md);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
 }
 
 .preferenceInfo {
@@ -294,11 +291,12 @@
 }
 
 .toggle input:checked+.toggleSlider {
-    background-color: var(--accent-primary);
+    background-color: var(--text-primary);
 }
 
 .toggle input:checked+.toggleSlider:before {
     transform: translateX(20px);
+    background-color: var(--bg-primary);
 }
 
 .toggle:hover .toggleSlider {

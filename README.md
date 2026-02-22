@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🦅 Grepbase
 
-## Getting Started
+**Grepbase** is an AI-powered code exploration and visualization platform that helps developers understand the evolution of a codebase. It transforms complex git histories into an interactive, readable timeline enhanced with AI-generated explanations.
 
-First, run the development server:
+## ✨ Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- 🕰️ **Interactive Timeline**: Visualize the progression of any GitHub repository through its commit history.
+- 🤖 **Multi-Provider AI**: Support for the latest models from **OpenAI (GPT-5.3)**, **Google (Gemini 3.1)**, **Anthropic (Claude 4.6)**, **GLM**, and **Kimi**.
+- 📝 **AI Code Explanations**: Get deep technical insights into what changed in a commit and why it matters.
+- 📂 **File Exploration**: Dive into specific files and have AI explain their purpose and patterns.
+- 🔐 **Privacy First**: API keys are stored locally and encrypted in your browser (Never sent to our servers).
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🚀 Getting Started
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Prerequisites
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- [Bun](https://bun.sh) (Recommended runtime)
+- Node.js & NPM
 
-## Learn More
+### Setup
 
-To learn more about Next.js, take a look at the following resources:
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/Khrees2412/grepbase.git
+    cd grepbase
+    ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+2.  **Install dependencies**:
+    ```bash
+    bun install
+    ```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+3.  **Environment Variables**:
+    Create a `.env` file in the root directory:
+    ```env
+    GITHUB_TOKEN=your_github_personal_access_token
+    NEXT_PUBLIC_APP_URL=http://localhost:3000
+    ```
 
-## Deploy on Vercel
+4.  **Run Development Server**:
+    ```bash
+    bun run dev
+    ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+5.  **Open Grepbase**:
+    Navigate to [http://localhost:3000](http://localhost:3000) and enter a GitHub repository URL to start exploring.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🛠️ Tech Stack
+
+- **Framework**: [Next.js](https://nextjs.org) (App Router)
+- **AI Integration**: [Vercel AI SDK](https://sdk.vercel.ai)
+- **Styling**: Vanilla CSS & [Framer Motion](https://www.framer.com/motion/)
+- **Database**: Drizzle ORM
+- **Runtime**: [Bun](https://bun.sh)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+MIT License

@@ -104,7 +104,36 @@ export async function POST(request: NextRequest) {
             const hasCommits = Number(commitCount[0]?.count || 0) > 0;
 
             if (hasCommits) {
-                // Repo fully cached with commits
+                // Return cached but trigger background job to fetch new commits (explicit revalidation)
+                const jobId = crypto.randomUUID();
+                const now = new Date();
+
+                await (db.insert(ingestJobs) as any).values({
+                    jobId,
+                    url: sanitizedUrl,
+                    status: 'pending',
+                    progress: 0,
+                    createdAt: now,
+                    updatedAt: now,
+                    repoId: existingRepo.id,
+                });
+
+                const ingestionPromise = processRepoIngestion({
+                    jobId,
+                    url: sanitizedUrl,
+                    clientId,
+                    db: db as any,
+                }).catch((err) => {
+                    logger.error({ err }, 'Background sync failed');
+                });
+
+                if (typeof waitUntil === 'function') {
+                    waitUntil(ingestionPromise);
+                } else {
+                    requestLogger.debug('waitUntil not available, running sync directly');
+                    ingestionPromise;
+                }
+
                 const duration = Date.now() - startTime;
                 await analytics.trackRepoIngest({
                     owner,
@@ -114,8 +143,8 @@ export async function POST(request: NextRequest) {
                     duration,
                 });
 
-                requestLogger.info({ owner, repo: repoName, duration }, 'Repository already cached with commits');
-                return NextResponse.json({ repository: existingRepo, cached: true });
+                requestLogger.info({ owner, repo: repoName, duration }, 'Repository already cached, fetching fresh data in background');
+                return NextResponse.json({ repository: existingRepo, cached: true, jobId });
             }
 
             // Repo exists but has no commits - trigger background fetch
@@ -134,16 +163,23 @@ export async function POST(request: NextRequest) {
             });
 
             // Fire-and-forget background processing using Next.js waitUntil
-            waitUntil(
-                processRepoIngestion({
-                    jobId,
-                    url: sanitizedUrl,
-                    clientId,
-                    db: db as any,
-                }).catch((err) => {
-                    logger.error({ err }, 'Background ingestion failed');
-                })
-            );
+            const ingestionPromise = processRepoIngestion({
+                jobId,
+                url: sanitizedUrl,
+                clientId,
+                db: db as any,
+            }).catch((err) => {
+                logger.error({ err }, 'Background ingestion failed');
+            });
+
+            if (typeof waitUntil === 'function') {
+                waitUntil(ingestionPromise);
+            } else {
+                // Fallback for environments where waitUntil is not available
+                // In local dev, we want to see it run
+                requestLogger.debug('waitUntil not available, running ingestion promise directly');
+                ingestionPromise;
+            }
 
             return NextResponse.json(
                 {
@@ -171,16 +207,22 @@ export async function POST(request: NextRequest) {
         });
 
         // Fire-and-forget background processing using Next.js waitUntil
-        waitUntil(
-            processRepoIngestion({
-                jobId,
-                url: sanitizedUrl,
-                clientId,
-                db: db as any,
-            }).catch((err) => {
-                logger.error({ err }, 'Background ingestion failed');
-            })
-        );
+        const ingestionPromise = processRepoIngestion({
+            jobId,
+            url: sanitizedUrl,
+            clientId,
+            db: db as any,
+        }).catch((err) => {
+            logger.error({ err }, 'Background ingestion failed');
+        });
+
+        if (typeof waitUntil === 'function') {
+            waitUntil(ingestionPromise);
+        } else {
+            // Fallback for environments where waitUntil is not available
+            requestLogger.debug('waitUntil not available, running ingestion promise directly');
+            ingestionPromise;
+        }
 
         requestLogger.info({ jobId, owner, repo: repoName }, 'Repository ingest started in background');
 

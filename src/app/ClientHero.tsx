@@ -88,7 +88,12 @@ export default function ClientHero({ styles }: { styles: any }) {
             }>('/api/repos', { url });
 
             if (data.cached && data.repository) {
-                router.push(`/explore/${data.repository.id}`);
+                // Background job might be running due to explicit revalidation
+                if (data.jobId) {
+                    router.push(`/explore/${data.repository.id}?jobId=${data.jobId}`);
+                } else {
+                    router.push(`/explore/${data.repository.id}`);
+                }
                 return;
             }
 
@@ -133,19 +138,12 @@ export default function ClientHero({ styles }: { styles: any }) {
     return (
         <section className={styles.hero}>
             <div className={styles.heroContent}>
-                <div className={styles.badge}>
-                    <Sparkles size={14} />
-                    <span>AI-Powered Code Learning</span>
-                </div>
-
                 <h1 className={styles.title}>
-                    Understand Code <br />
-                    <span className="text-gradient">Through Time</span>
+                    Grepbase
                 </h1>
 
                 <p className={styles.subtitle}>
-                    Walk through any open source project&apos;s git history like a book. Let AI explain each chapter of the
-                    codebase evolution.
+                    Understand code history with AI-powered explanations.
                 </p>
 
                 <form onSubmit={handleSubmit} className={styles.searchForm}>
@@ -154,7 +152,7 @@ export default function ClientHero({ styles }: { styles: any }) {
                         <input
                             type="text"
                             className={`${styles.searchInput} ${validationError ? styles.searchInputError : ''}`}
-                            placeholder="Enter GitHub URL (e.g., github.com/sindresorhus/is)"
+                            placeholder="Paste a GitHub URL (e.g., sindresorhus/is)"
                             value={url}
                             onChange={handleUrlChange}
                             disabled={loading}
@@ -187,21 +185,6 @@ export default function ClientHero({ styles }: { styles: any }) {
                 </form>
 
                 {error && <div className={styles.error}>{error}</div>}
-
-                <div className={styles.features}>
-                    <div className={styles.feature}>
-                        <Clock size={18} />
-                        <span>Time-travel through commits</span>
-                    </div>
-                    <div className={styles.feature}>
-                        <Sparkles size={18} />
-                        <span>AI explanations at each step</span>
-                    </div>
-                    <div className={styles.feature}>
-                        <BookOpen size={18} />
-                        <span>Learn like reading a book</span>
-                    </div>
-                </div>
             </div>
         </section>
     );

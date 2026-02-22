@@ -11,8 +11,8 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-md) var(--space-lg);
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-primary);
+    border-bottom: 2px solid var(--border-subtle);
     flex-shrink: 0;
 }
 
@@ -54,11 +54,9 @@
     justify-content: space-between;
     gap: var(--space-md);
     padding: 6px 12px;
-    background: var(--bg-tertiary);
-    /* Fallback */
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: 0.5rem;
     cursor: pointer;
     transition: all var(--transition-fast);
     min-width: 280px;
@@ -122,7 +120,7 @@
 
 .progressFill {
     height: 100%;
-    background: var(--accent-gradient);
+    background: var(--accent-primary);
     transition: width var(--transition-default);
 }
 
@@ -141,7 +139,7 @@
 /* Sidebar */
 .sidebar {
     width: 280px;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border-right: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
@@ -229,7 +227,7 @@
 }
 
 .timelineItemActive {
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(0, 112, 243, 0.1);
 }
 
 .timelineItemActive .timelineDot {
@@ -308,9 +306,9 @@
 .commitSha {
     font-size: 0.85rem;
     color: var(--accent-primary);
-    background: rgba(99, 102, 241, 0.1);
+    background: rgba(0, 112, 243, 0.1);
     padding: 2px 8px;
-    border-radius: var(--radius-sm);
+    border-radius: 0.25rem;
 }
 
 .commitMessage {
@@ -382,7 +380,7 @@
 }
 
 .fileItemActive {
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(0, 112, 243, 0.1);
     color: var(--accent-primary);
 }
 
@@ -428,7 +426,7 @@
 .aiPanel {
     width: 400px;
     border-left: 1px solid var(--border-subtle);
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     flex-shrink: 0;
     overflow: hidden;
 }

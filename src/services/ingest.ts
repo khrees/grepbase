@@ -105,9 +105,10 @@ export async function processRepoIngestion({
                 stars: repoDetails.stars,
                 defaultBranch: repoDetails.defaultBranch,
                 lastFetched: now,
+                createdAt: now,
             } as any)
             .onConflictDoUpdate({
-                target: repositories.url,
+                target: [repositories.url],
                 set: {
                     description: repoDetails.description,
                     readme: null,
@@ -118,11 +119,17 @@ export async function processRepoIngestion({
             })
             .returning() as any);
 
+        if (!repoResult || repoResult.length === 0) {
+            processLogger.error('Failed to get repository ID after insert/update');
+            throw new Error('Database failed to return repository record');
+        }
+
         const repoId = repoResult[0].id;
+        processLogger.info({ repoId }, 'Repository record saved/updated');
 
         // 5. Fetch commits
         await (db.update(ingestJobs) as any)
-            .set({ progress: 30, updatedAt: new Date() })
+            .set({ progress: 30, updatedAt: new Date(), repoId })
             .where(eq(ingestJobs.jobId, jobId));
 
         processLogger.debug({ owner, repoName }, 'Fetching commits');
@@ -159,12 +166,12 @@ export async function processRepoIngestion({
                         .insert(commits)
                         .values(commit as any)
                         .onConflictDoUpdate({
-                            target: [commits.repoId, commits.sha],
+                            target: [commits.sha],
                             set: commit as any,
                         }) as any);
                 } catch (e) {
                     // Fallback if unique index isn't set up exactly right yet
-                    console.warn(`Could not insert commit ${commit.sha}:`, e);
+                    processLogger.warn({ sha: commit.sha, error: e }, 'Could not upsert commit');
                 }
             }
 
@@ -253,6 +260,7 @@ export async function processRepoIngestion({
                 status: 'completed',
                 progress: 100,
                 updatedAt: new Date(),
+                repoId,
             })
             .where(eq(ingestJobs.jobId, jobId));
 
