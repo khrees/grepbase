@@ -8,7 +8,7 @@
 - 🤖 **Multi-Provider AI**: Support for the latest models from **OpenAI (GPT-5.3)**, **Google (Gemini 3.1)**, **Anthropic (Claude 4.6)**, **GLM**, and **Kimi**.
 - 📝 **AI Code Explanations**: Get deep technical insights into what changed in a commit and why it matters.
 - 📂 **File Exploration**: Dive into specific files and have AI explain their purpose and patterns.
-- 🔐 **Privacy First**: API keys are stored locally and encrypted in your browser (Never sent to our servers).
+- 🔐 **Privacy First**: API keys are encrypted locally in your browser via AES-GCM and sent directly to your chosen AI provider through our API proxy.
 
 ## 🚀 Getting Started
 

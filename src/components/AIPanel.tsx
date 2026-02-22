@@ -8,19 +8,11 @@ import styles from './AIPanel.module.css';
 import { getAISettings, getAutoExplainEnabled } from './SettingsModal';
 import { api } from '@/lib/api-client';
 
+import type { Repository, Commit } from '@/types';
+
 interface AIPanelProps {
-    repository: {
-        id: number;
-        name: string;
-        owner: string;
-        description: string | null;
-    };
-    commit: {
-        sha: string;
-        message: string;
-        authorName: string | null;
-        date: string;
-    };
+    repository: Pick<Repository, 'id' | 'name' | 'owner' | 'description'>;
+    commit: Pick<Commit, 'sha' | 'message' | 'authorName' | 'date'>;
     totalCommits: number;
     currentIndex: number;
     onOpenFile?: (path: string) => void;
@@ -224,7 +216,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         }, 1000);
 
         try {
-            const response = await api.postStream('/api/explain', {
+            const response = await api.postStream('/api/explain/commit', {
                 type: 'commit',
                 repoId: repository.id,
                 commitSha: commit.sha,
@@ -337,7 +329,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         abortControllerRef.current = new AbortController();
 
         try {
-            const response = await api.postStream('/api/explain', {
+            const response = await api.postStream('/api/explain/question', {
                 type: 'question',
                 repoId: repository.id,
                 commitSha: commit.sha,

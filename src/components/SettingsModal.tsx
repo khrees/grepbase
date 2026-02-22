@@ -20,6 +20,11 @@ interface ProviderSettings {
 
 const STORAGE_KEY = 'ai_settings';
 
+interface StoredSettings extends Record<AIProviderType, ProviderSettings> {
+    activeProvider?: AIProviderType;
+    autoExplain?: boolean;
+}
+
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
     const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>({
@@ -38,30 +43,23 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     // Load settings from secure storage on mount
     useEffect(() => {
-        // Try session storage first (more secure for API keys)
-        const sessionData = secureStorage.getSessionItem(STORAGE_KEY);
+        const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
         if (sessionData) {
             setSettings(prev => ({ ...prev, ...sessionData }));
-            if (sessionData.activeProvider) {
-                setActiveProvider(sessionData.activeProvider);
-            }
-            if (sessionData.autoExplain) {
-                setAutoExplain(sessionData.autoExplain);
-            }
+            if (sessionData.activeProvider) setActiveProvider(sessionData.activeProvider);
+            if (sessionData.autoExplain) setAutoExplain(sessionData.autoExplain);
             return;
         }
-
-        // Fall back to secure localStorage
-        const saved = secureStorage.getSecureItem(STORAGE_KEY);
-        if (saved) {
-            setSettings(prev => ({ ...prev, ...saved }));
-            if (saved.activeProvider) {
-                setActiveProvider(saved.activeProvider);
+        // Load from encrypted storage (async)
+        secureStorage.getSecureItem<StoredSettings>(STORAGE_KEY).then(saved => {
+            if (saved) {
+                setSettings(prev => ({ ...prev, ...saved }));
+                if (saved.activeProvider) setActiveProvider(saved.activeProvider);
+                if (saved.autoExplain) setAutoExplain(saved.autoExplain);
+                // Also populate session storage so sync reads work this session
+                secureStorage.setSessionItem(STORAGE_KEY, saved);
             }
-            if (saved.autoExplain) {
-                setAutoExplain(saved.autoExplain);
-            }
-        }
+        });
     }, []);
 
     // Save settings to secure storage
@@ -72,12 +70,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             autoExplain,
         };
 
-        // Save to session storage (cleared on tab close) for better security
         secureStorage.setSessionItem(STORAGE_KEY, data);
-
-        // Also save to obfuscated localStorage for persistence
-        // Note: Users should ideally re-enter API keys per session
-        secureStorage.setSecureItem(STORAGE_KEY, data);
+        secureStorage.setSecureItem(STORAGE_KEY, data); // fire-and-forget async
 
         onClose();
     }
@@ -302,25 +296,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     );
 }
 
-// Helper to get current AI settings
+// Helper to get current AI settings (sync — reads from sessionStorage only)
 export function getAISettings(): { provider: AIProviderType; config: ProviderSettings } | null {
     if (typeof window === 'undefined') return null;
 
-    // Try session storage first (what SettingsModal saves to)
-    const sessionData = secureStorage.getSessionItem(STORAGE_KEY);
+    const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
     if (sessionData) {
         const provider = sessionData.activeProvider || 'gemini';
         const config = sessionData[provider];
-        if (config) {
-            return { provider, config };
-        }
-    }
-
-    // Fall back to secure localStorage
-    const saved = secureStorage.getSecureItem(STORAGE_KEY);
-    if (saved) {
-        const provider = saved.activeProvider || 'gemini';
-        const config = saved[provider];
         if (config) {
             return { provider, config };
         }
@@ -332,16 +315,9 @@ export function getAISettings(): { provider: AIProviderType; config: ProviderSet
 export function getAutoExplainEnabled(): boolean {
     if (typeof window === 'undefined') return false;
 
-    // Try session first
-    const sessionData = secureStorage.getSessionItem(STORAGE_KEY);
+    const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
     if (sessionData && typeof sessionData.autoExplain === 'boolean') {
         return sessionData.autoExplain;
-    }
-
-    // Fallback to local
-    const saved = secureStorage.getSecureItem(STORAGE_KEY);
-    if (saved && typeof saved.autoExplain === 'boolean') {
-        return saved.autoExplain;
     }
 
     return false;

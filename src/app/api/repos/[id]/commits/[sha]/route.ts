@@ -3,15 +3,7 @@ import { repositories, commits, files } from '@/db';
 import { eq, and } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { fetchFilesAtCommit, getLanguageFromPath } from '@/services/github';
-
-const CODE_EXTENSIONS = [
-    '.js', '.jsx', '.ts', '.tsx', '.py', '.rs', '.go', '.java',
-    '.cpp', '.c', '.h', '.hpp', '.rb', '.php', '.swift', '.kt',
-    '.md', '.json', '.yaml', '.yml', '.toml', '.css', '.scss',
-    '.html', '.xml', '.sql', '.sh', '.bash',
-];
-
-const MAX_FILE_SIZE = 100000; // 100KB max for content fetching
+import { shouldFetchFileContent } from '@/lib/constants';
 
 export async function GET(
     request: NextRequest,
@@ -28,7 +20,7 @@ export async function GET(
         }
 
         // Get repo and commit info
-        const repo = await (db.select() as any)
+        const repo = await db.select()
             .from(repositories)
             .where(eq(repositories.id, repoId))
             .limit(1);
@@ -37,7 +29,7 @@ export async function GET(
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
 
-        const commit = await (db.select() as any)
+        const commit = await db.select()
             .from(commits)
             .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
             .limit(1);
@@ -47,30 +39,25 @@ export async function GET(
         }
 
         // Check if we have cached files for this commit
-        const cachedFiles = await (db.select({
+        const cachedFiles = await db.select({
             id: files.id,
             path: files.path,
             size: files.size,
             language: files.language,
             hasContent: files.content,
-        }) as any)
+        })
             .from(files)
             .where(eq(files.commitId, commit[0].id));
 
         if (cachedFiles.length > 0) {
             // Return metadata only (no content) to prevent stack overflow
-            const fileList = cachedFiles.map((f: any) => ({
+            const fileList = cachedFiles.map((f) => ({
                 id: f.id,
                 path: f.path,
                 size: f.size,
                 language: f.language,
                 hasContent: !!f.hasContent,
-                shouldFetchContent: (() => {
-                    const ext = '.' + (f.path.split('.').pop() || '');
-                    const isCodeFile = CODE_EXTENSIONS.includes(ext.toLowerCase());
-                    const isSmallEnough = Number(f.size || 0) <= MAX_FILE_SIZE;
-                    return isCodeFile && isSmallEnough;
-                })(),
+                shouldFetchContent: shouldFetchFileContent(f.path, Number(f.size || 0)),
             }));
 
             return NextResponse.json({
@@ -91,17 +78,13 @@ export async function GET(
         // Filter to code files - but don't fetch content yet (lazy loading)
         const filesToSave = [];
         for (const file of githubFiles) {
-            const ext = '.' + (file.path.split('.').pop() || '');
-            const isCodeFile = CODE_EXTENSIONS.includes(ext.toLowerCase());
-            const isSmallEnough = file.size <= MAX_FILE_SIZE;
-
             filesToSave.push({
                 commitId: commit[0].id,
                 path: file.path,
                 content: null, // Content will be fetched lazily
                 size: file.size,
                 language: getLanguageFromPath(file.path),
-                shouldFetchContent: isCodeFile && isSmallEnough,
+                shouldFetchContent: shouldFetchFileContent(file.path, file.size),
             });
         }
 
@@ -118,7 +101,7 @@ export async function GET(
             const BATCH_SIZE = 10;
             for (let i = 0; i < dbFiles.length; i += BATCH_SIZE) {
                 const batch = dbFiles.slice(i, i + BATCH_SIZE);
-                await (db.insert(files) as any).values(batch);
+                await db.insert(files).values(batch);
             }
         }
 

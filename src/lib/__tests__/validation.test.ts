@@ -95,6 +95,21 @@ describe('validation', () => {
             expect(result.success).toBe(true);
         });
 
+        test('validates story mode request', () => {
+            const result = explainRequestSchema.safeParse({
+                type: 'story',
+                repoId: 1,
+                startSha: 'abc1234',
+                endSha: 'def5678',
+                chapterSize: 4,
+                provider: {
+                    type: 'openai',
+                    apiKey: 'sk-test',
+                },
+            });
+            expect(result.success).toBe(true);
+        });
+
         test('rejects commit request without sha', () => {
             const result = explainRequestSchema.safeParse({
                 type: 'commit',

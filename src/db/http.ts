@@ -6,9 +6,7 @@
  * while still using Cloudflare D1 as the database.
  */
 
-import { drizzle } from 'drizzle-orm/d1';
-import * as schema from './schema';
-import type { Database } from './index';
+/// <reference types="@cloudflare/workers-types" />
 
 interface D1QueryResult {
   success: boolean;
@@ -157,17 +155,16 @@ function createHttpD1Client(
 }
 
 /**
- * Create an HTTP-based D1 database client wrapped with Drizzle
+ * Create a D1-compatible HTTP client.
+ *
+ * The returned object satisfies the subset of the D1Database interface
+ * that Drizzle ORM requires (prepare, batch, exec).
+ * Wrap the result with `drizzle()` to get a fully typed Drizzle instance.
  */
-export function createHttpDb(
+export function createHttpD1(
   accountId: string,
   databaseId: string,
   apiToken: string
-): Database {
-  const httpD1 = createHttpD1Client(accountId, databaseId, apiToken);
-  // Cast to any since our implementation matches the interface Drizzle needs
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return drizzle(httpD1 as any, { schema });
+): D1Database {
+  return createHttpD1Client(accountId, databaseId, apiToken) as unknown as D1Database;
 }
-
-export type HttpDatabase = ReturnType<typeof createHttpDb>;

@@ -27,11 +27,38 @@ export interface GitHubCommit {
     date: Date;
 }
 
+interface GitHubCommitApiItem {
+    sha: string;
+    commit: {
+        message: string;
+        author?: { name?: string; email?: string; date?: string };
+        committer?: { date?: string };
+    };
+}
+
 export interface GitHubFile {
     path: string;
     type: 'file' | 'dir';
     size: number;
     sha: string;
+}
+
+export interface GitHubCommitFileDiff {
+    path: string;
+    previousPath: string | null;
+    status: 'added' | 'removed' | 'modified' | 'renamed' | string;
+    additions: number;
+    deletions: number;
+    changes: number;
+    patch: string | null;
+}
+
+export interface GitHubCompareDiff {
+    status: string;
+    aheadBy: number;
+    behindBy: number;
+    totalCommits: number;
+    files: GitHubCommitFileDiff[];
 }
 
 // Helper to get headers with auth if available
@@ -132,7 +159,7 @@ export async function fetchReadme(owner: string, repo: string): Promise<string |
 export async function fetchCommitHistory(
     owner: string,
     repo: string,
-    maxCommits: number = 100
+    maxCommits: number = GITHUB.MAX_COMMITS_PER_REPO
 ): Promise<GitHubCommit[]> {
     const cacheKey = `commits:${owner}:${repo}:${maxCommits}`;
     const cached = await cache.get<GitHubCommit[]>(cacheKey);
@@ -140,49 +167,68 @@ export async function fetchCommitHistory(
 
     const allCommits: GitHubCommit[] = [];
     let page = 1;
-    const perPage = Math.min(100, maxCommits);
+    const cappedMax = Math.max(1, maxCommits);
+    const perPage = GITHUB.MAX_COMMITS_PER_REQUEST;
 
-    while (allCommits.length < maxCommits) {
-        const response = await fetch(
-            `${GITHUB.API_BASE}/repos/${owner}/${repo}/commits?per_page=${perPage}&page=${page}`,
-            {
-                headers: getGitHubHeaders(),
-            }
-        );
-
-        if (!response.ok) {
-            githubLogger.error({ owner, repo, status: response.status, page }, 'Failed to fetch commits');
-            throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json() as Array<{
-            sha: string;
-            commit: {
-                message: string;
-                author?: { name?: string; email?: string; date?: string };
-                committer?: { date?: string };
-            };
-        }>;
+    while (allCommits.length < cappedMax) {
+        const remaining = cappedMax - allCommits.length;
+        const pageSize = Math.min(perPage, remaining);
+        const data = await fetchCommitHistoryPage(owner, repo, page, pageSize);
         if (data.length === 0) break;
 
-        for (const commit of data) {
-            allCommits.push({
-                sha: commit.sha,
-                message: commit.commit.message,
-                authorName: commit.commit.author?.name || null,
-                authorEmail: commit.commit.author?.email || null,
-                date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
-            });
-        }
+        allCommits.push(...data);
 
-        if (data.length < perPage) break;
+        if (data.length < pageSize) break;
         page++;
     }
 
     // Reverse to get oldest first (chronological order)
-    const result = allCommits.reverse().slice(0, maxCommits);
+    const result = allCommits.reverse().slice(0, cappedMax);
     await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
     return result;
+}
+
+/**
+ * Fetch a single page of commits for a repository (newest first)
+ */
+export async function fetchCommitHistoryPage(
+    owner: string,
+    repo: string,
+    page: number,
+    perPage: number = GITHUB.MAX_COMMITS_PER_REQUEST
+): Promise<GitHubCommit[]> {
+    const safePage = Math.max(1, page);
+    const safePerPage = Math.min(
+        GITHUB.MAX_COMMITS_PER_REQUEST,
+        Math.max(1, perPage)
+    );
+    const cacheKey = `commits-page:${owner}:${repo}:${safePage}:${safePerPage}`;
+    const cached = await cache.get<GitHubCommit[]>(cacheKey);
+    if (cached) return cached;
+
+    const response = await fetch(
+        `${GITHUB.API_BASE}/repos/${owner}/${repo}/commits?per_page=${safePerPage}&page=${safePage}`,
+        {
+            headers: getGitHubHeaders(),
+        }
+    );
+
+    if (!response.ok) {
+        githubLogger.error({ owner, repo, status: response.status, page: safePage }, 'Failed to fetch commits');
+        throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json() as GitHubCommitApiItem[];
+    const commits = data.map((commit) => ({
+        sha: commit.sha,
+        message: commit.commit.message,
+        authorName: commit.commit.author?.name || null,
+        authorEmail: commit.commit.author?.email || null,
+        date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
+    }));
+
+    await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
+    return commits;
 }
 
 /**
@@ -282,6 +328,116 @@ export async function fetchCommitDiff(
     } catch {
         return null;
     }
+}
+
+/**
+ * Fetch per-file diffs for a single commit
+ */
+export async function fetchCommitFileDiffs(
+    owner: string,
+    repo: string,
+    sha: string
+): Promise<GitHubCommitFileDiff[]> {
+    const cacheKey = `commit-files-diff:${owner}:${repo}:${sha}`;
+    const cached = await cache.get<GitHubCommitFileDiff[]>(cacheKey);
+    if (cached) return cached;
+
+    const response = await fetch(
+        `${GITHUB.API_BASE}/repos/${owner}/${repo}/commits/${encodeURIComponent(sha)}`,
+        { headers: getGitHubHeaders() }
+    );
+
+    if (!response.ok) {
+        githubLogger.error({ owner, repo, sha, status: response.status }, 'Failed to fetch commit file diffs');
+        throw new Error(`Failed to fetch commit file diffs: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json() as {
+        files?: Array<{
+            filename: string;
+            previous_filename?: string;
+            status: string;
+            additions: number;
+            deletions: number;
+            changes: number;
+            patch?: string;
+        }>;
+    };
+
+    const files = (data.files || []).map(file => ({
+        path: file.filename,
+        previousPath: file.previous_filename || null,
+        status: file.status,
+        additions: file.additions || 0,
+        deletions: file.deletions || 0,
+        changes: file.changes || 0,
+        patch: file.patch || null,
+    }));
+
+    await cache.set(cacheKey, files, CACHE_TTL.WEEK);
+    return files;
+}
+
+/**
+ * Fetch file-level compare data between two commits
+ */
+export async function fetchCompareDiff(
+    owner: string,
+    repo: string,
+    baseSha: string,
+    headSha: string
+): Promise<GitHubCompareDiff> {
+    const cacheKey = `compare:${owner}:${repo}:${baseSha}:${headSha}`;
+    const cached = await cache.get<GitHubCompareDiff>(cacheKey);
+    if (cached) return cached;
+
+    const response = await fetch(
+        `${GITHUB.API_BASE}/repos/${owner}/${repo}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
+        { headers: getGitHubHeaders() }
+    );
+
+    if (!response.ok) {
+        githubLogger.error(
+            { owner, repo, baseSha, headSha, status: response.status },
+            'Failed to fetch compare diff'
+        );
+        throw new Error(`Failed to fetch compare diff: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json() as {
+        status?: string;
+        ahead_by?: number;
+        behind_by?: number;
+        total_commits?: number;
+        files?: Array<{
+            filename: string;
+            previous_filename?: string;
+            status: string;
+            additions: number;
+            deletions: number;
+            changes: number;
+            patch?: string;
+        }>;
+    };
+
+    const result: GitHubCompareDiff = {
+        status: data.status || 'unknown',
+        aheadBy: data.ahead_by || 0,
+        behindBy: data.behind_by || 0,
+        totalCommits: data.total_commits || 0,
+        files: (data.files || []).map(file => ({
+            path: file.filename,
+            previousPath: file.previous_filename || null,
+            status: file.status,
+            additions: file.additions || 0,
+            deletions: file.deletions || 0,
+            changes: file.changes || 0,
+            patch: file.patch || null,
+        })),
+    };
+
+    await cache.set(cacheKey, result, CACHE_TTL.WEEK);
+    return result;
 }
 
 /**

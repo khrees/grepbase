@@ -3,8 +3,6 @@ import ClientHero from './ClientHero';
 import ClientSettingsHeader from './ClientSettingsHeader';
 import styles from './page.module.css';
 
-export const dynamic = 'force-dynamic';
-
 export default async function Home() {
     return (
         <main className={styles.main}>

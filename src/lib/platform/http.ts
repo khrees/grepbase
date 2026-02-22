@@ -13,7 +13,7 @@ import type {
   PlatformAnalytics,
   PlatformContext,
 } from './types';
-import { createHttpDb } from '@/db/http';
+import { createHttpD1 } from '@/db/http';
 
 /**
  * Get HTTP-based platform environment
@@ -40,11 +40,7 @@ export function getHttpPlatformEnv(): PlatformEnv {
   return {
     getDatabase: () => {
       if (!databaseId) throw new Error('Missing CLOUDFLARE_D1_DATABASE_ID');
-      // Use Drizzle's HTTP driver directly
-      // This returns a properly typed Drizzle instance that works over HTTP
-      const httpDb = createHttpDb(accountId, databaseId, apiToken);
-      // Cast to D1Database to satisfy the interface (Drizzle handles the actual calls)
-      return httpDb as unknown as D1Database;
+      return createHttpD1(accountId, databaseId, apiToken);
     },
 
     getStorage: () => {
@@ -112,17 +108,16 @@ class HttpR2Storage implements PlatformStorage {
     if (typeof value === 'string') {
       body = value;
     } else if (value instanceof Uint8Array) {
-      body = value as any; // Type cast for compatibility
+      body = new Blob([new Uint8Array(value)]);
     } else {
-      // Convert stream to blob
       const reader = value.getReader();
-      const chunks: Uint8Array[] = [];
+      const chunks: BlobPart[] = [];
       while (true) {
         const { done, value: chunk } = await reader.read();
         if (done) break;
-        chunks.push(chunk);
+        chunks.push(new Uint8Array(chunk));
       }
-      body = new Blob(chunks as any[]); // Type cast for compatibility
+      body = new Blob(chunks);
     }
 
     const response = await fetch(url, {

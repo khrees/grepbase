@@ -34,15 +34,16 @@ export class APIClient {
     });
 
     if (!response.ok) {
-      const error: any = await response.json().catch(() => ({
+      const body = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,
-      }));
+      })) as Record<string, unknown>;
+      const err = body?.error;
       const errorMessage =
-        (typeof error?.error === 'string' && error.error) ||
-        (typeof error?.error?.message === 'string' && error.error.message) ||
-        (typeof error?.message === 'string' && error.message) ||
+        (typeof err === 'string' && err) ||
+        (typeof err === 'object' && err !== null && 'message' in err && typeof (err as Record<string, unknown>).message === 'string' && (err as Record<string, unknown>).message) ||
+        (typeof body?.message === 'string' && body.message) ||
         `HTTP ${response.status}: ${response.statusText}`;
-      throw new Error(errorMessage);
+      throw new Error(errorMessage as string);
     }
 
     return response.json();
@@ -85,15 +86,16 @@ export class APIClient {
     });
 
     if (!response.ok) {
-      const error: any = await response.json().catch(() => ({
+      const body = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,
-      }));
+      })) as Record<string, unknown>;
+      const err = body?.error;
       const errorMessage =
-        (typeof error?.error === 'string' && error.error) ||
-        (typeof error?.error?.message === 'string' && error.error.message) ||
-        (typeof error?.message === 'string' && error.message) ||
+        (typeof err === 'string' && err) ||
+        (typeof err === 'object' && err !== null && 'message' in err && typeof (err as Record<string, unknown>).message === 'string' && (err as Record<string, unknown>).message) ||
+        (typeof body?.message === 'string' && body.message) ||
         `HTTP ${response.status}: ${response.statusText}`;
-      throw new Error(errorMessage);
+      throw new Error(errorMessage as string);
     }
 
     return response;

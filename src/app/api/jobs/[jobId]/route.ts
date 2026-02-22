@@ -14,9 +14,7 @@ export async function GET(
         const { jobId } = await params;
         const db = getDb();
 
-        // The cast to `any` for db operations is necessary here due to HTTP vs native D1 type checking mismatch 
-        // inside our platform wrapper, but it works smoothly at runtime via HTTP proxy.
-        const job = await (db.select() as any)
+        const job = await db.select()
             .from(ingestJobs)
             .where(eq(ingestJobs.jobId, jobId))
             .limit(1);
@@ -27,31 +25,29 @@ export async function GET(
         }
 
         const jobData = job[0];
+        let repository = null;
 
-        if (jobData.status === 'completed' && jobData.repoId) {
-            const repo = await (db.select() as any)
+        if (jobData.repoId) {
+            const repo = await db.select()
                 .from(repositories)
                 .where(eq(repositories.id, jobData.repoId))
                 .limit(1);
-
-            return NextResponse.json({
-                jobId: jobData.jobId,
-                status: jobData.status,
-                progress: jobData.progress,
-                totalCommits: jobData.totalCommits,
-                processedCommits: jobData.processedCommits,
-                repository: repo[0] || null,
-                error: jobData.error,
-                updatedAt: jobData.updatedAt,
-            });
+            repository = repo[0] || null;
         }
+
+        const processedCommits = Number(jobData.processedCommits || 0);
+        const ready =
+            jobData.status === 'completed' ||
+            (jobData.status === 'processing' && processedCommits > 0);
 
         return NextResponse.json({
             jobId: jobData.jobId,
             status: jobData.status,
             progress: jobData.progress,
             totalCommits: jobData.totalCommits,
-            processedCommits: jobData.processedCommits,
+            processedCommits,
+            repository,
+            ready,
             error: jobData.error,
             updatedAt: jobData.updatedAt,
         });

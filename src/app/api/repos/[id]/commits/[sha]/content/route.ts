@@ -26,7 +26,7 @@ export async function GET(
         }
 
         // Get repo info
-        const repo = await (db.select() as any)
+        const repo = await db.select()
             .from(repositories)
             .where(eq(repositories.id, repoId))
             .limit(1);
@@ -36,7 +36,7 @@ export async function GET(
         }
 
         // Get commit info
-        const commit = await (db.select() as any)
+        const commit = await db.select()
             .from(commits)
             .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
             .limit(1);
@@ -46,7 +46,7 @@ export async function GET(
         }
 
         // Check if we have cached content for this file
-        const cachedFile = await (db.select() as any)
+        const cachedFile = await db.select()
             .from(files)
             .where(and(eq(files.commitId, commit[0].id), eq(files.path, filePath)))
             .limit(1);
@@ -74,7 +74,7 @@ export async function GET(
 
         // Update cache in database
         if (cachedFile.length > 0) {
-            await (db.update(files) as any)
+            await db.update(files)
                 .set({ content })
                 .where(eq(files.id, cachedFile[0].id));
         }

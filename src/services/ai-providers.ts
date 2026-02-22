@@ -104,13 +104,6 @@ export async function createAIProviderAsync(config: AIProviderConfig): Promise<L
     }
 }
 
-// Synchronous version for backward compatibility (re-exports dynamic version)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function createAIProvider(_config: AIProviderConfig): LanguageModel {
-    // This is a workaround - we need to make callers await the result
-    throw new Error('Use createAIProviderAsync instead for edge runtime compatibility');
-}
-
 /**
  * Get available models for a provider
  */

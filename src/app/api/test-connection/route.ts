@@ -41,28 +41,31 @@ const testConnectionSchema = z
         }
     });
 
-function normalizeModels(models: Array<{ id?: string; name?: string }> | undefined): string[] {
-    if (!models) return [];
-    return models
+type ModelEntry = { id?: string; name?: string };
+
+function normalizeModels(models: unknown): string[] {
+    if (!Array.isArray(models)) return [];
+    return (models as ModelEntry[])
         .map((model) => model.id || model.name)
         .filter((name): name is string => typeof name === 'string')
         .map((name) => name.replace(/^models\//, ''));
 }
 
-async function fetchJson(url: string, init?: RequestInit): Promise<any> {
+async function fetchJson(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
     const response = await fetch(url, init);
-    const data = (await response.json().catch(() => null)) as any;
+    const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
 
     if (!response.ok) {
+        const error = data?.error;
         const message =
-            (typeof data?.error === 'string' && data.error) ||
-            (typeof data?.error?.message === 'string' && data.error.message) ||
+            (typeof error === 'string' && error) ||
+            (typeof error === 'object' && error !== null && 'message' in error && typeof (error as Record<string, unknown>).message === 'string' && (error as Record<string, unknown>).message) ||
             (typeof data?.message === 'string' && data.message) ||
             `${response.status} ${response.statusText}`;
-        throw new Error(message);
+        throw new Error(message as string);
     }
 
-    return data;
+    return data ?? {};
 }
 
 async function fetchModels(provider: AIProviderType, apiKey?: string, baseUrl?: string): Promise<string[]> {
@@ -73,7 +76,7 @@ async function fetchModels(provider: AIProviderType, apiKey?: string, baseUrl?: 
                     Authorization: `Bearer ${apiKey}`,
                 },
             });
-            return normalizeModels(data?.data);
+            return normalizeModels(data.data);
         }
 
         case 'anthropic': {
@@ -83,7 +86,7 @@ async function fetchModels(provider: AIProviderType, apiKey?: string, baseUrl?: 
                     'anthropic-version': '2023-06-01',
                 },
             });
-            return normalizeModels(data?.data);
+            return normalizeModels(data.data);
         }
 
         case 'gemini': {
@@ -91,7 +94,7 @@ async function fetchModels(provider: AIProviderType, apiKey?: string, baseUrl?: 
                 String(apiKey || '')
             )}`;
             const data = await fetchJson(url);
-            return normalizeModels(data?.models);
+            return normalizeModels(data.models);
         }
 
         case 'ollama':
@@ -116,7 +119,7 @@ async function fetchModels(provider: AIProviderType, apiKey?: string, baseUrl?: 
             for (const endpoint of endpoints) {
                 try {
                     const data = await fetchJson(endpoint, { headers });
-                    const models = normalizeModels(data?.data || data?.models);
+                    const models = normalizeModels(data.data || data.models);
                     if (models.length) return models;
                     return [];
                 } catch (error) {

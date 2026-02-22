@@ -46,42 +46,43 @@ export class RateLimiter {
             };
         }
 
-        const rateLimitKey = `ratelimit:${key}`;
         const now = Date.now();
-        const windowStart = now - windowSeconds * 1000;
+        const windowMs = windowSeconds * 1000;
+        const windowBucket = Math.floor(now / windowMs);
+        const reset = (windowBucket + 1) * windowMs;
+        const rateLimitKey = `ratelimit:${key}:${windowBucket}`;
 
         try {
-            // Get current request timestamps
-            const data = await kv.get<number[]>(rateLimitKey);
-            const requests = data || [];
+            const data = await kv.get<number | string | number[]>(rateLimitKey);
+            let currentCount = 0;
 
-            // Filter out requests outside the current window
-            const recentRequests = requests.filter(timestamp => timestamp > windowStart);
+            // Backward compatibility for previously stored array payloads.
+            if (typeof data === 'number' && Number.isFinite(data)) {
+                currentCount = data;
+            } else if (typeof data === 'string') {
+                const parsed = Number.parseInt(data, 10);
+                currentCount = Number.isFinite(parsed) ? parsed : 0;
+            } else if (Array.isArray(data)) {
+                currentCount = data.length;
+            }
 
-            // Check if limit exceeded
-            if (recentRequests.length >= limit) {
-                const oldestRequest = Math.min(...recentRequests);
-                const resetTime = oldestRequest + windowSeconds * 1000;
-
+            if (currentCount >= limit) {
                 return {
                     success: false,
                     limit,
                     remaining: 0,
-                    reset: resetTime,
+                    reset,
                 };
             }
 
-            // Add current request
-            recentRequests.push(now);
-
-            // Store updated timestamps (expire after window)
-            await kv.set(rateLimitKey, recentRequests, windowSeconds);
+            const nextCount = currentCount + 1;
+            await kv.set(rateLimitKey, nextCount, windowSeconds + 1);
 
             return {
                 success: true,
                 limit,
-                remaining: limit - recentRequests.length,
-                reset: now + windowSeconds * 1000,
+                remaining: Math.max(0, limit - nextCount),
+                reset,
             };
         } catch (error) {
             logger.error({ error, key: rateLimitKey }, 'Rate limit check failed');
@@ -90,7 +91,7 @@ export class RateLimiter {
                 success: true,
                 limit,
                 remaining: limit,
-                reset: now + windowSeconds * 1000,
+                reset,
             };
         }
     }

@@ -16,6 +16,11 @@
     flex-shrink: 0;
 }
 
+.headerCompact {
+    padding-top: var(--space-sm);
+    padding-bottom: var(--space-sm);
+}
+
 .headerLeft,
 .headerRight {
     display: flex;
@@ -394,6 +399,156 @@
     flex: 1;
     overflow: auto;
     background: var(--bg-primary);
+    display: flex;
+    flex-direction: column;
+}
+
+.viewTabs {
+    display: flex;
+    gap: 4px;
+    padding: 8px var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-secondary);
+}
+
+.viewTab {
+    border: 1px solid var(--border-default);
+    background: transparent;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.viewTab:hover {
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+
+.viewTabActive {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+}
+
+.diffContainer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.diffToolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 8px var(--space-md);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-secondary);
+}
+
+.diffStats {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.diffToolbarControls,
+.diffToolbarControlsWide {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+}
+
+.diffToolbarControlsWide {
+    width: 100%;
+}
+
+.diffToolbar select {
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-default);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    padding: 0 8px;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    min-width: 220px;
+}
+
+.diffToolbar label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    min-width: 220px;
+}
+
+.diffModeToggle {
+    display: inline-flex;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.diffModeToggle button {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 6px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.diffModeToggle button:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.diffModeToggle .diffModeActive {
+    background: var(--accent-primary);
+    color: white;
+}
+
+.diffMeta {
+    display: flex;
+    gap: var(--space-md);
+    align-items: center;
+    padding: 8px var(--space-md);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-primary);
+}
+
+.compareSummary {
+    display: flex;
+    gap: var(--space-md);
+    align-items: center;
+    padding: 8px var(--space-md);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.errorInline {
+    margin: var(--space-md);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.14);
+    color: #ffb7be;
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 0.85rem;
 }
 
 .noFile {
@@ -404,6 +559,10 @@
     justify-content: center;
     gap: var(--space-md);
     color: var(--text-muted);
+}
+
+.emptyStateIcon {
+    opacity: 0.4;
 }
 
 /* Navigation */
@@ -541,5 +700,17 @@
         bottom: 0;
         z-index: 50;
         box-shadow: -4px 0 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .diffToolbar,
+    .diffToolbarControls,
+    .diffToolbarControlsWide {
+        flex-wrap: wrap;
+    }
+
+    .diffToolbar select,
+    .diffToolbar label {
+        min-width: 180px;
+        width: 100%;
     }
 }

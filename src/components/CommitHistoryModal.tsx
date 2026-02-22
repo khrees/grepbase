@@ -5,15 +5,7 @@ import { X, Calendar, Clock, GitCommit } from 'lucide-react';
 import styles from './CommitHistoryModal.module.css';
 import CalendarTimeline from './CalendarTimeline';
 import CommitTimeline from './CommitTimeline';
-
-interface Commit {
-    id: number;
-    sha: string;
-    message: string;
-    authorName: string | null;
-    date: string;
-    order: number;
-}
+import type { Commit } from '@/types';
 
 interface CommitHistoryModalProps {
     isOpen: boolean;

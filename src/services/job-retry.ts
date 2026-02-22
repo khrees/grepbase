@@ -17,7 +17,7 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
 
   try {
     // 1. Get the job
-    const job = await (database.select() as any)
+    const job = await database.select()
       .from(ingestJobs)
       .where(eq(ingestJobs.jobId, jobId))
       .limit(1);
@@ -51,18 +51,16 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
     requestLogger.info({ url: currentJob.url, status: currentJob.status }, 'Preparing to retry job');
 
     // Find if repo was partially created
-    const existingRepo = await (database.select() as any)
+    const existingRepo = await database.select()
       .from(repositories)
       .where(eq(repositories.url, currentJob.url))
       .limit(1);
-
-    let cleaningNeeded = false;
 
     if (existingRepo && existingRepo.length > 0) {
       const repoId = existingRepo[0].id;
 
       // Check if we have commits
-      const commitCount = await (database.select({ count: sql<number>`count(*)` }) as any)
+      const commitCount = await database.select({ count: sql<number>`count(*)` })
         .from(commits)
         .where(eq(commits.repoId, repoId));
 
@@ -82,7 +80,7 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
 
     // 3. Reset job state
     const now = new Date();
-    await (database.update(ingestJobs) as any)
+    await database.update(ingestJobs)
       .set({
         status: 'pending',
         progress: 0,
@@ -135,7 +133,7 @@ export async function retryFailedJobs(clientId: string = 'cron'): Promise<{
 
   try {
     // Find failed jobs that haven't reached max retries
-    const failedJobs = await (database.select() as any)
+    const failedJobs = await database.select()
       .from(ingestJobs)
       .where(
         and(
@@ -148,7 +146,7 @@ export async function retryFailedJobs(clientId: string = 'cron'): Promise<{
 
     // Find stuck processing jobs (no updates in 15 mins)
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-    const stuckJobs = await (database.select() as any)
+    const stuckJobs = await database.select()
       .from(ingestJobs)
       .where(
         and(
@@ -200,20 +198,19 @@ export async function getRetryStats() {
   const database = getDb();
 
   try {
-    const jobs = await (database.select() as any).from(ingestJobs);
+    const jobs = await database.select().from(ingestJobs);
 
-    // Explicit any definition added for job parsing.
     return {
       total: jobs.length,
-      pending: jobs.filter((j: any) => j.status === 'pending').length,
-      processing: jobs.filter((j: any) => j.status === 'processing').length,
-      completed: jobs.filter((j: any) => j.status === 'completed').length,
-      failed: jobs.filter((j: any) => j.status === 'failed').length,
+      pending: jobs.filter((j) => j.status === 'pending').length,
+      processing: jobs.filter((j) => j.status === 'processing').length,
+      completed: jobs.filter((j) => j.status === 'completed').length,
+      failed: jobs.filter((j) => j.status === 'failed').length,
       retried: {
-        pending: jobs.filter((j: any) => j.status === 'pending' && (j.retryCount || 0) > 0).length,
-        processing: jobs.filter((j: any) => j.status === 'processing' && (j.retryCount || 0) > 0).length,
-        completed: jobs.filter((j: any) => j.status === 'completed' && (j.retryCount || 0) > 0).length,
-        permanentlyFailed: jobs.filter((j: any) => j.status === 'failed' && (j.retryCount || 0) >= 3).length,
+        pending: jobs.filter((j) => j.status === 'pending' && (j.retryCount || 0) > 0).length,
+        processing: jobs.filter((j) => j.status === 'processing' && (j.retryCount || 0) > 0).length,
+        completed: jobs.filter((j) => j.status === 'completed' && (j.retryCount || 0) > 0).length,
+        permanentlyFailed: jobs.filter((j) => j.status === 'failed' && (j.retryCount || 0) >= 3).length,
       }
     };
   } catch (error) {

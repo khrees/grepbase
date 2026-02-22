@@ -1,6 +1,7 @@
 import { getPlatformEnv } from '@/lib/platform/context';
 import { logger } from '@/lib/logger';
 import type { PlatformCache } from '@/lib/platform/types';
+import { GITHUB } from '@/lib/constants';
 
 const cacheLogger = logger.child({ service: 'cache' });
 
@@ -71,29 +72,13 @@ export class CacheService {
     }
 
     /**
-     * Delete multiple keys matching a pattern
-     * Note: KV doesn't support pattern matching natively, so this is a workaround
-     */
-    async deletePattern(pattern: string): Promise<void> {
-        const kv = this.getKv();
-        if (!kv) return;
-
-        try {
-            // For KV, we need to track keys separately or use a prefix list
-            // This is a placeholder - in production, you'd maintain a separate list
-            cacheLogger.warn({ pattern }, 'Pattern deletion not fully implemented for KV');
-        } catch (e) {
-            cacheLogger.error({ pattern, error: e }, 'Pattern deletion failed');
-        }
-    }
-
-    /**
      * Invalidate cache for a specific repository
      */
     async invalidateRepo(owner: string, repo: string): Promise<void> {
         const keys = [
             `repo:${owner}:${repo}`,
-            `commits:${owner}:${repo}:100`,
+            `commits:${owner}:${repo}:${GITHUB.MAX_COMMITS_PER_REPO}`,
+            `commits:${owner}:${repo}:100`, // Legacy cache key
         ];
 
         cacheLogger.info({ owner, repo, keysCount: keys.length }, 'Invalidating repository cache');

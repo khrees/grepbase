@@ -3,15 +3,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, File, FileCode, FileText, FileJson, FileType, Image, Cog } from 'lucide-react';
 import styles from './FileTree.module.css';
-
-interface FileData {
-    path: string;
-    content: string | null;
-    language: string;
-    size: number;
-    hasContent?: boolean;
-    shouldFetchContent?: boolean;
-}
+import type { FileData } from '@/types';
 
 interface FileTreeProps {
     files: FileData[];

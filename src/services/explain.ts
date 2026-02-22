@@ -74,6 +74,13 @@ export interface ProjectContext {
     currentCommitIndex: number;
 }
 
+export interface StoryCommit {
+    sha: string;
+    message: string;
+    authorName: string | null;
+    date: Date;
+}
+
 /**
  * Generate a streaming explanation for a commit
  */
@@ -257,6 +264,74 @@ Please explain:
         maxOutputTokens: 1500,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TTL.DAY); // Project explanation might change more often?
+        },
+    });
+
+    return result.toTextStreamResponse();
+}
+
+/**
+ * Generate a narrative walkthrough across a range of commits
+ */
+export async function explainStory(
+    commits: StoryCommit[],
+    project: ProjectContext,
+    providerConfig: AIProviderConfig,
+    chapterSize: number = 5
+): Promise<Response> {
+    const model = await createAIProviderAsync(providerConfig);
+
+    const normalizedChapterSize = Math.max(2, Math.min(12, chapterSize));
+    const commitsList = commits
+        .map((commit, index) => {
+            const title = commit.message.split('\n')[0] || 'No message';
+            return `${index + 1}. ${commit.sha.slice(0, 7)} - ${title} (${commit.authorName || 'Unknown'}, ${commit.date.toISOString().slice(0, 10)})`;
+        })
+        .join('\n');
+
+    const systemPrompt = `You are an expert software historian helping engineers understand how a project evolved.
+
+Turn commit history into a coherent technical story.
+
+Output requirements:
+- Return markdown only, no code fences wrapping the full output.
+- Start with a single H1 title.
+- Group the timeline into clear chapters with H2 headings.
+- Each chapter should cover around ${normalizedChapterSize} commits and include:
+  - What changed
+  - Why it likely changed
+  - Technical implications
+- End with a short "What's next" section with concrete follow-up directions.`;
+
+    const userPrompt = `Project: ${project.name}
+${project.description ? `Description: ${project.description}` : ''}
+Total commits in project: ${project.totalCommits}
+Commits in this story range: ${commits.length}
+
+Commit list (chronological):
+${commitsList}
+
+Write a narrated walkthrough of this evolution.`;
+
+    const cacheKey = `explain:story:${await sha256(
+        project.name +
+        commits.map(commit => commit.sha).join(':') +
+        normalizedChapterSize +
+        (providerConfig.model || 'default')
+    )}`;
+
+    const cached = await cache.get<string>(cacheKey);
+    if (cached) {
+        return createCachedResponse(cached);
+    }
+
+    const result = streamText({
+        model,
+        system: systemPrompt,
+        prompt: userPrompt,
+        maxOutputTokens: 1800,
+        onFinish: ({ text }) => {
+            cache.set(cacheKey, text, CACHE_TTL.DAY);
         },
     });
 

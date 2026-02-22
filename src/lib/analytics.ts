@@ -7,14 +7,6 @@ import type { PlatformAnalytics } from './platform/types';
 
 const analyticsLogger = logger.child({ service: 'analytics' });
 
-// Keeping for documentation/type reference
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-interface _AnalyticsEvent {
-    blobs?: string[];
-    doubles?: number[];
-    indexes?: string[];
-}
-
 export class Analytics {
     private getAnalyticsEngine(): PlatformAnalytics | null {
         try {
@@ -80,7 +72,7 @@ export class Analytics {
     async trackAIUsage(params: {
         provider: string;
         model?: string;
-        type: 'commit' | 'project' | 'question' | 'day-summary';
+        type: 'commit' | 'project' | 'question' | 'day-summary' | 'story';
         success: boolean;
         duration: number;
     }) {

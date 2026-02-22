@@ -48,9 +48,12 @@ export type AIProviderTypeFromSchema = z.infer<typeof aiProviderTypeSchema>;
 
 // Explain API request
 export const explainRequestSchema = z.object({
-    type: z.enum(['commit', 'project', 'question', 'day-summary']),
+    type: z.enum(['commit', 'project', 'question', 'day-summary', 'story']),
     repoId: z.number().int().positive(),
     commitSha: z.string().optional(),
+    startSha: z.string().optional(),
+    endSha: z.string().optional(),
+    chapterSize: z.number().int().min(2).max(12).optional(),
     question: z.string().optional(),
     visibleFiles: z.array(z.string()).optional(),
     provider: aiProviderConfigSchema.optional(),

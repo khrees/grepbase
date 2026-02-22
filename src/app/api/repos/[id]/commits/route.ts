@@ -26,15 +26,19 @@ export async function GET(
 
         // Parse pagination params from query string
         const url = new URL(request.url);
-        const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
-        const limit = Math.min(
-            PAGINATION.MAX_LIMIT,
-            Math.max(1, parseInt(url.searchParams.get('limit') || String(PAGINATION.DEFAULT_LIMIT), 10))
-        );
+        const requestedPage = Number.parseInt(url.searchParams.get('page') || '', 10);
+        const requestedLimit = Number.parseInt(url.searchParams.get('limit') || '', 10);
+
+        const page = Number.isFinite(requestedPage) && requestedPage > 0
+            ? requestedPage
+            : PAGINATION.DEFAULT_PAGE;
+        const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+            ? Math.min(PAGINATION.MAX_LIMIT, requestedLimit)
+            : PAGINATION.DEFAULT_LIMIT;
         const offset = (page - 1) * limit;
 
         // Check if repo exists
-        const repo = await (db.select() as any)
+        const repo = await db.select()
             .from(repositories)
             .where(eq(repositories.id, repoId))
             .limit(1);
@@ -45,13 +49,13 @@ export async function GET(
         }
 
         // Get total count
-        const totalResult = await (db.select({ count: sql<number>`count(*)` }) as any)
+        const totalResult = await db.select({ count: sql<number>`count(*)` })
             .from(commits)
             .where(eq(commits.repoId, repoId));
         const total = Number(totalResult[0]?.count || 0);
 
         // Fetch commits with pagination ordered by their position (oldest first)
-        const repoCommits = await (db.select() as any)
+        const repoCommits = await db.select()
             .from(commits)
             .where(eq(commits.repoId, repoId))
             .orderBy(asc(commits.order))

@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Github, Sparkles, ArrowRight, Clock, BookOpen, Loader2 } from 'lucide-react';
+import { Github, ArrowRight, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api-client';
 
 interface Repository {
     id: number;
 }
 
-export default function ClientHero({ styles }: { styles: any }) {
+export default function ClientHero({ styles }: { styles: Record<string, string> }) {
     const [url, setUrl] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -106,11 +106,19 @@ export default function ClientHero({ styles }: { styles: any }) {
                     const jobResponse = await api.get<{
                         status: string;
                         error?: string;
-                        repository?: any;
+                        ready?: boolean;
+                        processedCommits?: number;
+                        repository?: { id: number };
                     }>(`/api/jobs/${data.jobId}`);
 
-                    if (jobResponse.status === 'completed' && jobResponse.repository) {
-                        router.push(`/explore/${jobResponse.repository.id}`);
+                    const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
+                    if ((jobResponse.ready || hasProcessedCommits) && jobResponse.repository) {
+                        const basePath = `/explore/${jobResponse.repository.id}`;
+                        if (jobResponse.status === 'completed') {
+                            router.push(basePath);
+                        } else {
+                            router.push(`${basePath}?jobId=${data.jobId}`);
+                        }
                         return;
                     } else if (jobResponse.status === 'failed') {
                         throw new Error(jobResponse.error || 'Failed to fetch repository');

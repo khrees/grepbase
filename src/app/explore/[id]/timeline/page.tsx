@@ -11,6 +11,7 @@ import SettingsModal from '@/components/SettingsModal';
 import { getAISettings } from '@/components/SettingsModal';
 import CalendarTimeline from '@/components/CalendarTimeline';
 import { api } from '@/lib/api-client';
+import { fetchAllCommitsForRepository } from '@/lib/commit-pagination';
 
 interface Repository {
     id: number;
@@ -49,10 +50,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     useEffect(() => {
         async function fetchData() {
             try {
-                const data = await api.get<{
-                    repository: Repository;
-                    commits: Commit[];
-                }>(`/api/repos/${id}/commits`);
+                const data = await fetchAllCommitsForRepository(id);
 
                 setRepository(data.repository);
                 setCommits(data.commits);
@@ -83,11 +81,14 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
 
         try {
             // Generate summary for all commits on this day
-            const response = await api.postStream('/api/explain', {
-                provider: aiSettings.provider,
-                apiKey: aiSettings.config.apiKey,
-                model: aiSettings.config.model,
-                baseUrl: aiSettings.config.baseUrl,
+            const response = await api.postStream('/api/explain/day-summary', {
+                repoId: Number(id),
+                provider: {
+                    type: aiSettings.provider,
+                    apiKey: aiSettings.config.apiKey,
+                    model: aiSettings.config.model,
+                    baseUrl: aiSettings.config.baseUrl,
+                },
                 type: 'day-summary',
                 commits: dayCommits.map(c => ({
                     sha: c.sha,

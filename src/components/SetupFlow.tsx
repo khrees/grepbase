@@ -1,7 +1,7 @@
 
 
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from '@remix-run/react';
+import { useRouter } from 'next/navigation';
 import { Key, Check, AlertCircle, Loader2, Sparkles, ArrowRight, RefreshCw } from 'lucide-react';
 import styles from './SetupFlow.module.css';
 import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
@@ -19,20 +19,18 @@ interface ProviderSettings {
     baseUrl?: string;
 }
 
+interface StoredSettings extends Record<AIProviderType, ProviderSettings> {
+    activeProvider?: AIProviderType;
+}
+
 type SetupStep = 'config' | 'loading' | 'summary';
 
-interface RepoData {
-    id: number;
-    name: string;
-    owner: string;
-    description: string | null;
-    stars: number;
-}
+import type { RepoData } from '@/types';
 
 const STORAGE_KEY = 'ai_settings';
 
 export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
-    const navigate = useNavigate();
+    const router = useRouter();
     const [step, setStep] = useState<SetupStep>('config');
     const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
     const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>({
@@ -62,24 +60,20 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
     // Load settings from secure storage and start fetching repo
     useEffect(() => {
-        // Try session storage first
-        const sessionData = secureStorage.getSessionItem(STORAGE_KEY);
+        const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
         if (sessionData) {
             setSettings(prev => ({ ...prev, ...sessionData }));
-            if (sessionData.activeProvider) {
-                setActiveProvider(sessionData.activeProvider);
-            }
+            if (sessionData.activeProvider) setActiveProvider(sessionData.activeProvider);
             return;
         }
-
-        // Fall back to secure localStorage
-        const saved = secureStorage.getSecureItem(STORAGE_KEY);
-        if (saved) {
-            setSettings(prev => ({ ...prev, ...saved }));
-            if (saved.activeProvider) {
-                setActiveProvider(saved.activeProvider);
+        // Load from encrypted storage (async)
+        secureStorage.getSecureItem<StoredSettings>(STORAGE_KEY).then(saved => {
+            if (saved) {
+                setSettings(prev => ({ ...prev, ...saved }));
+                if (saved.activeProvider) setActiveProvider(saved.activeProvider);
+                secureStorage.setSessionItem(STORAGE_KEY, saved);
             }
-        }
+        });
     }, []);
 
     // Start background repo fetch immediately
@@ -135,14 +129,15 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                         status: string;
                         progress: number;
                         error?: string;
+                        repository?: RepoData;
                     };
                 }>(`/api/jobs/${jobId}`);
                 const data = response.job;
 
                 setJobProgress(data.progress);
 
-                if (data.status === 'completed' && (data as any).repository) {
-                    setRepoData((data as any).repository);
+                if (data.status === 'completed' && data.repository) {
+                    setRepoData(data.repository);
                     setFetchingRepo(false);
                     clearInterval(pollInterval);
                 } else if (data.status === 'failed') {
@@ -263,7 +258,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
     function viewTimeline() {
         if (repoData) {
-            navigate(`/explore/${repoData.id}/timeline`);
+            router.push(`/explore/${repoData.id}/timeline`);
         }
     }
 

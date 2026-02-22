@@ -1,0 +1,112 @@
+.emptyState {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    padding: var(--space-xl);
+    text-align: center;
+}
+
+.unifiedBody {
+    margin: 0;
+    height: 100%;
+    overflow: auto;
+    background: var(--bg-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.unifiedLine {
+    padding: 0 var(--space-md);
+    white-space: pre;
+}
+
+.splitContainer {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.splitHeader {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.splitHeader span {
+    padding: 6px var(--space-md);
+    border-right: 1px solid var(--border-subtle);
+}
+
+.splitHeader span:last-child {
+    border-right: none;
+}
+
+.splitBody {
+    flex: 1;
+    overflow: auto;
+}
+
+.splitRow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.splitCell {
+    margin: 0;
+    padding: 0 var(--space-md);
+    min-height: 20px;
+    white-space: pre;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    border-right: 1px solid var(--border-subtle);
+}
+
+.splitCell:last-child {
+    border-right: none;
+}
+
+.context {
+    color: var(--text-secondary);
+}
+
+.addition {
+    color: #8be9a7;
+    background: rgba(34, 197, 94, 0.15);
+}
+
+.deletion {
+    color: #ff9ea8;
+    background: rgba(239, 68, 68, 0.14);
+}
+
+.hunk {
+    color: #7dd3fc;
+    background: rgba(14, 165, 233, 0.15);
+}
+
+.meta {
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.14);
+}
+
+.notice {
+    color: #facc15;
+    background: rgba(234, 179, 8, 0.14);
+}
+
+.empty {
+    background: rgba(255, 255, 255, 0.02);
+}

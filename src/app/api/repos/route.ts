@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     const db = getDb();
 
     try {
-        const repoList = await (db.select() as any)
+        const repoList = await db.select()
             .from(repositories)
             .orderBy(desc(repositories.lastFetched));
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
 
     try {
         // Rate limiting
-        const clientId = rateLimiter.getClientId(request as any); // Adapt request object loosely for id
+        const clientId = rateLimiter.getClientId(request);
         const rateLimitResult = await rateLimiter.checkLimit(clientId, RATE_LIMITS.REPO_INGEST, 60);
 
         if (!rateLimitResult.success) {
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
         requestLogger.info({ owner, repo: repoName }, 'Processing repository ingest');
 
         // Check if repo already exists
-        const existing = await (db.select() as any)
+        const existing = await db.select()
             .from(repositories)
             .where(eq(repositories.url, sanitizedUrl))
             .limit(1);
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
             const existingRepo = existing[0];
 
             // Check if commits exist
-            const commitCount = await (db.select({ count: sql<number>`count(*)` }) as any)
+            const commitCount = await db.select({ count: sql<number>`count(*)` })
                 .from(commits)
                 .where(eq(commits.repoId, existingRepo.id));
 
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
                 const jobId = crypto.randomUUID();
                 const now = new Date();
 
-                await (db.insert(ingestJobs) as any).values({
+                await db.insert(ingestJobs).values({
                     jobId,
                     url: sanitizedUrl,
                     status: 'pending',
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
                     jobId,
                     url: sanitizedUrl,
                     clientId,
-                    db: db as any,
+                    db,
                 }).catch((err) => {
                     logger.error({ err }, 'Background sync failed');
                 });
@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
             const jobId = crypto.randomUUID();
             const now = new Date();
 
-            await (db.insert(ingestJobs) as any).values({
+            await db.insert(ingestJobs).values({
                 jobId,
                 url: sanitizedUrl,
                 status: 'pending',
@@ -167,7 +167,7 @@ export async function POST(request: NextRequest) {
                 jobId,
                 url: sanitizedUrl,
                 clientId,
-                db: db as any,
+                db,
             }).catch((err) => {
                 logger.error({ err }, 'Background ingestion failed');
             });
@@ -197,7 +197,7 @@ export async function POST(request: NextRequest) {
         const now = new Date();
 
         // Create job record
-        await (db.insert(ingestJobs) as any).values({
+        await db.insert(ingestJobs).values({
             jobId,
             url: sanitizedUrl,
             status: 'pending',
@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
             jobId,
             url: sanitizedUrl,
             clientId,
-            db: db as any,
+            db,
         }).catch((err) => {
             logger.error({ err }, 'Background ingestion failed');
         });
@@ -242,7 +242,7 @@ export async function POST(request: NextRequest) {
             method: 'POST',
             statusCode: 500,
             duration,
-            clientId: rateLimiter.getClientId(request as any),
+            clientId: rateLimiter.getClientId(request),
         });
 
         requestLogger.error(

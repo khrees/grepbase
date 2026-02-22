@@ -3,15 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { GitCommit } from 'lucide-react';
 import styles from './CommitTimeline.module.css';
-
-interface Commit {
-    id: number;
-    sha: string;
-    message: string;
-    authorName: string | null;
-    date: string;
-    order: number;
-}
+import type { Commit } from '@/types';
 
 interface CommitTimelineProps {
     commits: Commit[];

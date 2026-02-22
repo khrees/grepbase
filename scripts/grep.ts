@@ -3,7 +3,6 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import axios from 'axios';
 // exec/promisify removed - not currently used
 
 
@@ -42,6 +41,14 @@ interface PreprocessedBatch {
     batch: PreprocessedFile[];
     analysis: string;
     timestamp: string;
+}
+
+interface ChatCompletionResponse {
+    choices?: Array<{
+        message?: {
+            content?: string;
+        };
+    }>;
 }
 
 class GrepBase {
@@ -177,23 +184,21 @@ class GrepBase {
         const prompt = this.buildPreprocessingPrompt(batch);
 
         try {
-            const response = await axios.post(this.options.localLlmUrl, {
-                model: "meta-llama-3.1-8b-instruct",
+            const analysis = await this.generateChatCompletion({
+                model: 'meta-llama-3.1-8b-instruct',
                 messages: [
                     {
-                        role: "system",
-                        content: "You are a code analysis assistant. Analyze the provided code files and extract key structural information, dependencies, and purpose. Be concise and structured."
+                        role: 'system',
+                        content: 'You are a code analysis assistant. Analyze the provided code files and extract key structural information, dependencies, and purpose. Be concise and structured.',
                     },
                     {
-                        role: "user",
-                        content: prompt
-                    }
+                        role: 'user',
+                        content: prompt,
+                    },
                 ],
                 temperature: 0.1,
-                max_tokens: 2000
+                max_tokens: 2000,
             });
-
-            const analysis = response.data.choices[0].message.content;
 
             return {
                 batch: batch.map(f => ({
@@ -292,11 +297,11 @@ Format as structured text for easy parsing.`;
         const prompt = this.buildSummaryPrompt(file, content);
 
         try {
-            const response = await axios.post(this.options.localLlmUrl, {
-                model: "meta-llama-3.1-8b-instruct",
+            const analysis = await this.generateChatCompletion({
+                model: 'meta-llama-3.1-8b-instruct',
                 messages: [
                     {
-                        role: "system",
+                        role: 'system',
                         content: `You are an expert code analyst. Analyze the given code file and provide a clear, concise summary focusing on:
 1. What the file does (primary purpose)
 2. How it relates to other parts of the codebase
@@ -306,15 +311,13 @@ Format as structured text for easy parsing.`;
 Be specific and actionable. Avoid generic descriptions.`
                     },
                     {
-                        role: "user",
-                        content: prompt
+                        role: 'user',
+                        content: prompt,
                     }
                 ],
                 temperature: 0.2,
                 max_tokens: 800
             });
-
-            const analysis = response.data.choices[0].message.content;
 
             // Parse the LLM response to extract structured data
             return this.parseFileSummaryResponse(file, analysis);
@@ -330,6 +333,33 @@ Be specific and actionable. Avoid generic descriptions.`
                 timestamp: new Date().toISOString()
             };
         }
+    }
+
+    async generateChatCompletion(payload: {
+        model: string;
+        messages: Array<{ role: string; content: string }>;
+        temperature: number;
+        max_tokens: number;
+    }): Promise<string> {
+        const response = await fetch(this.options.localLlmUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Local LLM request failed: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json() as ChatCompletionResponse;
+        const content = data.choices?.[0]?.message?.content;
+        if (!content) {
+            throw new Error('Local LLM returned an empty response');
+        }
+
+        return content;
     }
 
     buildSummaryPrompt(file: FileInfo, content: string): string {
