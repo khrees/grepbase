@@ -37,10 +37,9 @@ describe('validation', () => {
     });
 
     describe('aiProviderConfigSchema', () => {
-        test('validates cloud provider with API key', () => {
+        test('validates cloud provider without API key', () => {
             const result = aiProviderConfigSchema.safeParse({
                 type: 'openai',
-                apiKey: 'sk-test123',
             });
             expect(result.success).toBe(true);
         });
@@ -51,13 +50,6 @@ describe('validation', () => {
                 baseUrl: 'http://localhost:11434',
             });
             expect(result.success).toBe(true);
-        });
-
-        test('rejects cloud provider without API key', () => {
-            const result = aiProviderConfigSchema.safeParse({
-                type: 'openai',
-            });
-            expect(result.success).toBe(false);
         });
 
         test('rejects invalid provider type', () => {
@@ -74,10 +66,9 @@ describe('validation', () => {
             const result = explainRequestSchema.safeParse({
                 type: 'commit',
                 repoId: 1,
-                commitSha: 'abc123',
+                commitSha: 'abc1234',
                 provider: {
                     type: 'openai',
-                    apiKey: 'sk-test',
                 },
             });
             expect(result.success).toBe(true);
@@ -89,7 +80,6 @@ describe('validation', () => {
                 repoId: 1,
                 provider: {
                     type: 'anthropic',
-                    apiKey: 'sk-test',
                 },
             });
             expect(result.success).toBe(true);
@@ -104,7 +94,6 @@ describe('validation', () => {
                 chapterSize: 4,
                 provider: {
                     type: 'openai',
-                    apiKey: 'sk-test',
                 },
             });
             expect(result.success).toBe(true);
@@ -116,7 +105,6 @@ describe('validation', () => {
                 repoId: 1,
                 provider: {
                     type: 'openai',
-                    apiKey: 'sk-test',
                 },
             });
             expect(result.success).toBe(false);
@@ -128,8 +116,29 @@ describe('validation', () => {
                 repoId: -1,
                 provider: {
                     type: 'openai',
+                },
+            });
+            expect(result.success).toBe(false);
+        });
+
+        test('rejects client-sent API key in nested provider config', () => {
+            const result = explainRequestSchema.safeParse({
+                type: 'project',
+                repoId: 1,
+                provider: {
+                    type: 'openai',
                     apiKey: 'sk-test',
                 },
+            });
+            expect(result.success).toBe(false);
+        });
+
+        test('rejects client-sent API key in flat payload', () => {
+            const result = explainRequestSchema.safeParse({
+                type: 'project',
+                repoId: 1,
+                providerType: 'openai',
+                apiKey: 'sk-test',
             });
             expect(result.success).toBe(false);
         });

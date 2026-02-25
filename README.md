@@ -8,7 +8,7 @@
 - 🤖 **Multi-Provider AI**: Support for the latest models from **OpenAI (GPT-5.3)**, **Google (Gemini 3.1)**, **Anthropic (Claude 4.6)**, **GLM**, and **Kimi**.
 - 📝 **AI Code Explanations**: Get deep technical insights into what changed in a commit and why it matters.
 - 📂 **File Exploration**: Dive into specific files and have AI explain their purpose and patterns.
-- 🔐 **Privacy First**: API keys are encrypted locally in your browser via AES-GCM and sent directly to your chosen AI provider through our API proxy.
+- 🔐 **Secure BYOK**: API keys are entered by users, then stored server-side in encrypted, session-scoped storage (never persisted in browser local/session storage).
 
 ## 🚀 Getting Started
 
@@ -34,8 +34,21 @@
     Create a `.env` file in the root directory:
     ```env
     GITHUB_TOKEN=your_github_personal_access_token
+    AI_CREDENTIALS_ENCRYPTION_KEY=generate_a_long_random_secret
+    AI_CREDENTIALS_SIGNING_KEY=generate_a_second_long_random_secret
+    ADMIN_API_KEY=generate_an_admin_secret_for_retry_endpoints
+    CLOUDFLARE_KV_NAMESPACE_ID=your_kv_namespace_id
+
+    # Optional provider defaults (used when no user key is stored for a session)
+    OPENAI_API_KEY=
+    ANTHROPIC_API_KEY=
+    GEMINI_API_KEY=
+    GLM_API_KEY=
+    KIMI_API_KEY=
+
     NEXT_PUBLIC_APP_URL=http://localhost:3000
     ```
+    `AI_CREDENTIALS_ENCRYPTION_KEY` and `AI_CREDENTIALS_SIGNING_KEY` must be stable across deploys/restarts, otherwise encrypted session credentials become unreadable.
 
 4.  **Run Development Server**:
     ```bash

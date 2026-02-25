@@ -1,12 +1,14 @@
 /**
  * AI Provider service using Vercel AI SDK
- * Supports multiple providers with BYOK (Bring Your Own Key)
+ * Supports multiple providers with server-side secret resolution
  * Uses dynamic imports to reduce initial bundle size
  */
 
 import type { LanguageModel } from 'ai';
+import { createHash } from 'node:crypto';
 
 export type AIProviderType = 'gemini' | 'openai' | 'anthropic' | 'ollama' | 'lmstudio' | 'glm' | 'kimi';
+type CloudAIProviderType = Exclude<AIProviderType, 'ollama' | 'lmstudio'>;
 
 export interface AIProviderConfig {
     type: AIProviderType;
@@ -38,6 +40,52 @@ type GeminiModelEntry = {
 const GEMINI_DISCOVERY_TTL_MS = 10 * 60 * 1000;
 const geminiDiscoveryCache = new Map<string, { models: string[]; expiresAt: number }>();
 
+const PROVIDER_API_KEY_ENV_CANDIDATES: Record<CloudAIProviderType, string[]> = {
+    gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+    openai: ['OPENAI_API_KEY'],
+    anthropic: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
+    glm: ['GLM_API_KEY', 'ZHIPU_API_KEY', 'BIGMODEL_API_KEY'],
+    kimi: ['KIMI_API_KEY', 'MOONSHOT_API_KEY'],
+};
+
+export function isLocalProvider(type: AIProviderType): type is 'ollama' | 'lmstudio' {
+    return type === 'ollama' || type === 'lmstudio';
+}
+
+function isCloudProvider(type: AIProviderType): type is CloudAIProviderType {
+    return !isLocalProvider(type);
+}
+
+export function getProviderApiKeyEnvCandidates(type: AIProviderType): string[] {
+    if (!isCloudProvider(type)) return [];
+    return PROVIDER_API_KEY_ENV_CANDIDATES[type];
+}
+
+export function getMissingApiKeyError(type: AIProviderType): string | null {
+    if (isLocalProvider(type)) return null;
+    const candidates = getProviderApiKeyEnvCandidates(type);
+    return `Missing server API key for ${PROVIDER_NAMES[type]}. Set one of: ${candidates.join(', ')}`;
+}
+
+export function resolveProviderApiKey(type: AIProviderType, explicitApiKey?: string): string | undefined {
+    if (explicitApiKey) {
+        const trimmed = explicitApiKey.trim();
+        if (trimmed) return trimmed;
+    }
+
+    if (isLocalProvider(type)) return undefined;
+
+    const candidates = getProviderApiKeyEnvCandidates(type);
+    for (const envName of candidates) {
+        const value = process.env[envName];
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value.trim();
+        }
+    }
+
+    return undefined;
+}
+
 function normalizeGeminiModelName(name: string): string {
     const trimmed = name.trim();
     const withoutPrefix = trimmed.replace(/^models\//, '');
@@ -52,8 +100,13 @@ function modelSupportsGenerateContent(model: GeminiModelEntry): boolean {
     return methods.includes('generateContent');
 }
 
+function getGeminiDiscoveryCacheKey(apiKey: string): string {
+    return createHash('sha256').update(apiKey).digest('base64url');
+}
+
 async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
-    const cached = geminiDiscoveryCache.get(apiKey);
+    const cacheKey = getGeminiDiscoveryCacheKey(apiKey);
+    const cached = geminiDiscoveryCache.get(cacheKey);
     const now = Date.now();
     if (cached && cached.expiresAt > now) {
         return cached.models;
@@ -76,7 +129,7 @@ async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
         )
     );
 
-    geminiDiscoveryCache.set(apiKey, { models, expiresAt: now + GEMINI_DISCOVERY_TTL_MS });
+    geminiDiscoveryCache.set(cacheKey, { models, expiresAt: now + GEMINI_DISCOVERY_TTL_MS });
     return models;
 }
 
@@ -111,36 +164,38 @@ function pickGeminiModel(requestedModel: string | undefined, discoveredModels: s
  * Uses dynamic imports to avoid bundling all providers
  */
 export async function createAIProviderAsync(config: AIProviderConfig): Promise<LanguageModel> {
-    const model = config.model || DEFAULT_MODELS[config.type];
+    const requestedModel = config.model || DEFAULT_MODELS[config.type];
+    const resolvedApiKey = resolveProviderApiKey(config.type, config.apiKey);
+    const missingApiKeyError = getMissingApiKeyError(config.type);
 
     switch (config.type) {
         case 'gemini': {
-            if (!config.apiKey) throw new Error('Gemini API key is required');
+            if (!resolvedApiKey) throw new Error(missingApiKeyError || 'Gemini API key is required');
             const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
-            const google = createGoogleGenerativeAI({ apiKey: config.apiKey });
+            const google = createGoogleGenerativeAI({ apiKey: resolvedApiKey });
             let discoveredModels: string[] = [];
             try {
-                discoveredModels = await fetchAvailableGeminiModels(config.apiKey);
+                discoveredModels = await fetchAvailableGeminiModels(resolvedApiKey);
             } catch {
                 // Discovery is best-effort. We still attempt with fallback/default model.
             }
 
-            const resolvedModel = pickGeminiModel(model, discoveredModels);
+            const resolvedModel = pickGeminiModel(requestedModel, discoveredModels);
             return google(resolvedModel);
         }
 
         case 'openai': {
-            if (!config.apiKey) throw new Error('OpenAI API key is required');
+            if (!resolvedApiKey) throw new Error(missingApiKeyError || 'OpenAI API key is required');
             const { createOpenAI } = await import('@ai-sdk/openai');
-            const openai = createOpenAI({ apiKey: config.apiKey });
-            return openai(model);
+            const openai = createOpenAI({ apiKey: resolvedApiKey });
+            return openai(requestedModel);
         }
 
         case 'anthropic': {
-            if (!config.apiKey) throw new Error('Anthropic API key is required');
+            if (!resolvedApiKey) throw new Error(missingApiKeyError || 'Anthropic API key is required');
             const { createAnthropic } = await import('@ai-sdk/anthropic');
-            const anthropic = createAnthropic({ apiKey: config.apiKey });
-            return anthropic(model);
+            const anthropic = createAnthropic({ apiKey: resolvedApiKey });
+            return anthropic(requestedModel);
         }
 
         case 'ollama': {
@@ -151,7 +206,7 @@ export async function createAIProviderAsync(config: AIProviderConfig): Promise<L
                 baseURL,
                 apiKey: 'ollama',
             });
-            return ollama(model);
+            return ollama(requestedModel);
         }
 
         case 'lmstudio': {
@@ -162,29 +217,31 @@ export async function createAIProviderAsync(config: AIProviderConfig): Promise<L
                 baseURL: lmstudioURL,
                 apiKey: 'lmstudio',
             });
-            return lmstudio(model);
+            return lmstudio(requestedModel);
         }
 
         case 'glm': {
+            if (!resolvedApiKey) throw new Error(missingApiKeyError || 'GLM API key is required');
             const baseURL = config.baseUrl || 'https://open.bigmodel.cn/api/paas/v4/';
             const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
             const glm = createOpenAICompatible({
                 name: 'glm',
                 baseURL,
-                apiKey: config.apiKey,
+                apiKey: resolvedApiKey,
             });
-            return glm(model);
+            return glm(requestedModel);
         }
 
         case 'kimi': {
+            if (!resolvedApiKey) throw new Error(missingApiKeyError || 'Kimi API key is required');
             const baseURL = config.baseUrl || 'https://api.moonshot.cn/v1';
             const { createOpenAICompatible } = await import('@ai-sdk/openai-compatible');
             const kimi = createOpenAICompatible({
                 name: 'kimi',
                 baseURL,
-                apiKey: config.apiKey,
+                apiKey: resolvedApiKey,
             });
-            return kimi(model);
+            return kimi(requestedModel);
         }
 
         default:

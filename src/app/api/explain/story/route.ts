@@ -2,39 +2,48 @@ import { NextRequest, NextResponse } from 'next/server';
 import { repositories, commits } from '@/db';
 import { asc, eq } from 'drizzle-orm';
 import { explainStory } from '@/services/explain';
-import type { AIProviderConfig } from '@/services/ai-providers';
 import { explainRequestSchema } from '@/lib/validation';
 import { logger } from '@/lib/logger';
-import { rateLimiter } from '@/lib/rate-limit';
 import { RATE_LIMITS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
 import { getDb } from '@/db';
-import { getClientIdFromHeaders } from '../utils';
+import {
+    applyPrivateNoStoreHeaders,
+    enforceCsrfProtection,
+    enforceRateLimit,
+    resolveSession,
+} from '@/lib/api-security';
+import { hasRepoAccess } from '@/services/resource-access';
+import { getClientIdFromHeaders, resolveProviderConfigFromRequest } from '../utils';
 
 export async function POST(request: NextRequest) {
     const requestLogger = logger.child({ endpoint: 'POST /api/explain/story' });
     const startTime = Date.now();
 
     try {
-        const clientId = getClientIdFromHeaders(request);
-        const rateLimitResult = await rateLimiter.checkLimit(clientId, RATE_LIMITS.EXPLAIN_API, 60);
-
-        if (!rateLimitResult.success) {
-            requestLogger.warn({ clientId }, 'Rate limit exceeded');
-            await analytics.trackRateLimit({ endpoint: '/api/explain/story', clientId, blocked: true });
-            return NextResponse.json(
-                { error: 'Rate limit exceeded', limit: rateLimitResult.limit, reset: rateLimitResult.reset },
-                {
-                    status: 429,
-                    headers: {
-                        'X-RateLimit-Limit': rateLimitResult.limit.toString(),
-                        'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
-                        'X-RateLimit-Reset': rateLimitResult.reset.toString(),
-                    },
-                }
-            );
+        const csrfError = enforceCsrfProtection(request);
+        if (csrfError) {
+            return csrfError;
         }
 
+        const session = await resolveSession(request);
+        if (!session) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const rateLimitError = await enforceRateLimit(request, {
+            keyPrefix: 'api:explain:story',
+            limit: RATE_LIMITS.EXPLAIN_API,
+            sessionId: session.sessionId,
+        });
+        if (rateLimitError) {
+            const clientId = getClientIdFromHeaders(request);
+            requestLogger.warn({ clientId }, 'Rate limit exceeded');
+            await analytics.trackRateLimit({ endpoint: '/api/explain/story', clientId, blocked: true });
+            return rateLimitError.response;
+        }
+
+        const clientId = getClientIdFromHeaders(request);
         await analytics.trackRateLimit({ endpoint: '/api/explain/story', clientId, blocked: false });
 
         const db = getDb();
@@ -53,7 +62,6 @@ export async function POST(request: NextRequest) {
             chapterSize,
             provider,
             providerType,
-            apiKey,
             model,
             baseUrl,
         } = parseResult.data;
@@ -62,12 +70,17 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid request wrapper for story' }, { status: 400 });
         }
 
-        const providerConfig: AIProviderConfig = {
-            type: provider?.type ?? providerType!,
-            apiKey: provider?.apiKey || apiKey,
-            baseUrl: provider?.baseUrl || baseUrl,
-            model: provider?.model || model,
-        };
+        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+        if (!repoAccess) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        const providerConfig = await resolveProviderConfigFromRequest(request, {
+            provider,
+            providerType,
+            baseUrl,
+            model,
+        }, session.sessionId);
 
         const repo = await db
             .select()
@@ -150,7 +163,7 @@ export async function POST(request: NextRequest) {
             clientId,
         });
 
-        return response;
+        return applyPrivateNoStoreHeaders(response);
     } catch (error) {
         const duration = Date.now() - startTime;
         const clientId = getClientIdFromHeaders(request);
@@ -165,7 +178,7 @@ export async function POST(request: NextRequest) {
 
         requestLogger.error({ error }, 'Error generating story');
         return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'Unknown error' },
+            { error: 'Failed to generate story' },
             { status: 500 }
         );
     }

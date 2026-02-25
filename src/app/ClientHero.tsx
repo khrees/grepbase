@@ -108,12 +108,13 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
                         error?: string;
                         ready?: boolean;
                         processedCommits?: number;
+                        repoId?: number | null;
                         repository?: { id: number };
                     }>(`/api/jobs/${data.jobId}`);
 
-                    const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
-                    if ((jobResponse.ready || hasProcessedCommits) && jobResponse.repository) {
-                        const basePath = `/explore/${jobResponse.repository.id}`;
+                    const resolvedRepoId = jobResponse.repository?.id ?? jobResponse.repoId ?? null;
+                    if (resolvedRepoId) {
+                        const basePath = `/explore/${resolvedRepoId}`;
                         if (jobResponse.status === 'completed') {
                             router.push(basePath);
                         } else {

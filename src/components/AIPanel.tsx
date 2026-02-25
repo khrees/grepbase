@@ -224,7 +224,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                 visibleFiles: visibleFilePathsRef.current,
                 provider: {
                     type: settings.provider,
-                    apiKey: settings.config.apiKey,
                     baseUrl: settings.config.baseUrl,
                     model: settings.config.model,
                 },
@@ -341,7 +340,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                 visibleFiles: visibleFilePathsRef.current,
                 provider: {
                     type: settings.provider,
-                    apiKey: settings.config.apiKey,
                     baseUrl: settings.config.baseUrl,
                     model: settings.config.model,
                 },

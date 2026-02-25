@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 // Repositories table - stores cached GitHub repo metadata
 export const repositories = sqliteTable('repositories', {
@@ -20,13 +20,14 @@ export const repositories = sqliteTable('repositories', {
 export const commits = sqliteTable('commits', {
     id: integer('id').primaryKey({ autoIncrement: true }),
     repoId: integer('repo_id').notNull().references(() => repositories.id, { onDelete: 'cascade' }),
-    sha: text('sha').notNull().unique(),
+    sha: text('sha').notNull(),
     message: text('message').notNull(),
     authorName: text('author_name'),
     authorEmail: text('author_email'),
     date: integer('date', { mode: 'timestamp' }).notNull(),
     order: integer('order').notNull(), // 1 = first commit, ascending
 }, (table) => [
+    uniqueIndex('commits_repo_sha_unique').on(table.repoId, table.sha),
     index('idx_commits_repo_id').on(table.repoId),
     index('idx_commits_sha').on(table.sha),
 ]);
@@ -40,6 +41,7 @@ export const files = sqliteTable('files', {
     size: integer('size').default(0),
     language: text('language'),
 }, (table) => [
+    uniqueIndex('idx_files_commit_path').on(table.commitId, table.path),
     index('idx_files_commit_id').on(table.commitId),
 ]);
 

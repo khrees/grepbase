@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { Check, Copy, FileCode2 } from 'lucide-react';
 import { Highlight, themes } from 'prism-react-renderer';
 import styles from './CodeViewer.module.css';
@@ -41,7 +41,7 @@ const langMap: Record<string, string> = {
     'plaintext': 'plain',
 };
 
-export default function CodeViewer({ code, language, filename }: CodeViewerProps) {
+export default memo(function CodeViewer({ code, language, filename }: CodeViewerProps) {
     const [wrapLines, setWrapLines] = useState(false);
     const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
     const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,4 +161,4 @@ export default function CodeViewer({ code, language, filename }: CodeViewerProps
             </span>
         </div>
     );
-}
+});

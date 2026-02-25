@@ -19,7 +19,12 @@ interface ProviderSettings {
     baseUrl?: string;
 }
 
-interface StoredSettings extends Record<AIProviderType, ProviderSettings> {
+interface PersistedProviderSettings {
+    model: string;
+    baseUrl?: string;
+}
+
+interface StoredSettings extends Record<AIProviderType, PersistedProviderSettings> {
     activeProvider?: AIProviderType;
 }
 
@@ -28,12 +33,10 @@ type SetupStep = 'config' | 'loading' | 'summary';
 import type { RepoData } from '@/types';
 
 const STORAGE_KEY = 'ai_settings';
+const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
 
-export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
-    const router = useRouter();
-    const [step, setStep] = useState<SetupStep>('config');
-    const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
-    const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>({
+function getDefaultSettings(): Record<AIProviderType, ProviderSettings> {
+    return {
         gemini: { apiKey: '', model: 'gemini-3.1-pro' },
         openai: { apiKey: '', model: 'gpt-5.2' },
         anthropic: { apiKey: '', model: 'claude-sonnet-4.6' },
@@ -41,10 +44,61 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         lmstudio: { apiKey: '', model: 'deepseek-r1-distill-llama-8b', baseUrl: 'http://127.0.0.1:1234/v1' },
         glm: { apiKey: '', model: 'glm-5', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
         kimi: { apiKey: '', model: 'kimi-k2.5', baseUrl: 'https://api.moonshot.cn/v1' },
-    });
+    };
+}
+
+function mergePersistedSettings(
+    defaults: Record<AIProviderType, ProviderSettings>,
+    saved: Partial<Record<AIProviderType, PersistedProviderSettings>>
+): Record<AIProviderType, ProviderSettings> {
+    const merged: Record<AIProviderType, ProviderSettings> = { ...defaults };
+
+    for (const provider of PROVIDERS) {
+        const next = saved[provider];
+        if (!next) continue;
+        merged[provider] = {
+            ...merged[provider],
+            model: next.model || merged[provider].model,
+            baseUrl: next.baseUrl || merged[provider].baseUrl,
+            apiKey: '',
+        };
+    }
+
+    return merged;
+}
+
+function toPersistedSettings(
+    settings: Record<AIProviderType, ProviderSettings>
+): Record<AIProviderType, PersistedProviderSettings> {
+    return {
+        gemini: { model: settings.gemini.model, baseUrl: settings.gemini.baseUrl },
+        openai: { model: settings.openai.model, baseUrl: settings.openai.baseUrl },
+        anthropic: { model: settings.anthropic.model, baseUrl: settings.anthropic.baseUrl },
+        ollama: { model: settings.ollama.model, baseUrl: settings.ollama.baseUrl },
+        lmstudio: { model: settings.lmstudio.model, baseUrl: settings.lmstudio.baseUrl },
+        glm: { model: settings.glm.model, baseUrl: settings.glm.baseUrl },
+        kimi: { model: settings.kimi.model, baseUrl: settings.kimi.baseUrl },
+    };
+}
+
+export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
+    const router = useRouter();
+    const [step, setStep] = useState<SetupStep>('config');
+    const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
+    const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>(getDefaultSettings);
+    const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
     const [testError, setTestError] = useState<string | null>(null);
+    const [storedCredentials, setStoredCredentials] = useState<Record<AIProviderType, boolean>>({
+        gemini: false,
+        openai: false,
+        anthropic: false,
+        ollama: false,
+        lmstudio: false,
+        glm: false,
+        kimi: false,
+    });
 
     // Background fetch state
     const [repoData, setRepoData] = useState<RepoData | null>(null);
@@ -63,18 +117,47 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     useEffect(() => {
         const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
         if (sessionData) {
-            setSettings(prev => ({ ...prev, ...sessionData }));
-            if (sessionData.activeProvider) setActiveProvider(sessionData.activeProvider);
+            const merged = mergePersistedSettings(getDefaultSettings(), sessionData);
+            const migrated: StoredSettings = {
+                ...toPersistedSettings(merged),
+                activeProvider: sessionData.activeProvider,
+            };
+
+            setSettings(merged);
+            secureStorage.setSessionItem(STORAGE_KEY, migrated);
+            secureStorage.setSecureItem(STORAGE_KEY, migrated);
+            if (migrated.activeProvider) setActiveProvider(migrated.activeProvider);
             return;
         }
         // Load from encrypted storage (async)
         secureStorage.getSecureItem<StoredSettings>(STORAGE_KEY).then(saved => {
             if (saved) {
-                setSettings(prev => ({ ...prev, ...saved }));
-                if (saved.activeProvider) setActiveProvider(saved.activeProvider);
-                secureStorage.setSessionItem(STORAGE_KEY, saved);
+                const merged = mergePersistedSettings(getDefaultSettings(), saved);
+                const migrated: StoredSettings = {
+                    ...toPersistedSettings(merged),
+                    activeProvider: saved.activeProvider,
+                };
+
+                setSettings(merged);
+                if (migrated.activeProvider) setActiveProvider(migrated.activeProvider);
+                secureStorage.setSessionItem(STORAGE_KEY, migrated);
+                secureStorage.setSecureItem(STORAGE_KEY, migrated);
             }
         });
+    }, []);
+
+    useEffect(() => {
+        api.get<{ providers?: Partial<Record<AIProviderType, boolean>> }>('/api/ai/credentials')
+            .then(response => {
+                if (!response.providers) return;
+                setStoredCredentials(prev => ({
+                    ...prev,
+                    ...response.providers,
+                }));
+            })
+            .catch(() => {
+                // Best effort only; UI can still proceed with manual API key entry.
+            });
     }, []);
 
     useEffect(() => {
@@ -132,19 +215,38 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         const pollInterval = setInterval(async () => {
             try {
                 const response = await api.get<{
-                    job: {
+                    job?: {
                         status: string;
                         progress: number;
                         error?: string;
+                        ready?: boolean;
+                        processedCommits?: number;
+                        repoId?: number | null;
                         repository?: RepoData;
                     };
+                    status?: string;
+                    progress?: number;
+                    error?: string;
+                    ready?: boolean;
+                    processedCommits?: number;
+                    repoId?: number | null;
+                    repository?: RepoData;
                 }>(`/api/jobs/${jobId}`);
-                const data = response.job;
+                const data = response.job ?? response;
 
-                setJobProgress(data.progress);
+                setJobProgress(Number(data.progress || 0));
+                const hasProcessedCommits = Number(data.processedCommits || 0) > 0;
+                const shouldResolveRepository = data.status === 'completed' || data.ready || hasProcessedCommits;
 
-                if (data.status === 'completed' && data.repository) {
-                    setRepoData(data.repository);
+                let resolvedRepo = data.repository ?? null;
+                if (!resolvedRepo && shouldResolveRepository && data.repoId) {
+                    resolvedRepo = (await api.get<{ repository: RepoData }>(
+                        `/api/repos/${data.repoId}/commits?page=1&limit=1`
+                    )).repository;
+                }
+
+                if (shouldResolveRepository && resolvedRepo) {
+                    setRepoData(resolvedRepo);
                     setFetchingRepo(false);
                     clearInterval(pollInterval);
                 } else if (data.status === 'failed') {
@@ -171,6 +273,24 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         setTestResult(null);
     }
 
+    async function persistEnteredApiKeys(current: Record<AIProviderType, ProviderSettings>): Promise<void> {
+        const pendingWrites = PROVIDERS
+            .map(provider => ({
+                provider,
+                apiKey: current[provider].apiKey.trim(),
+            }))
+            .filter(entry => entry.apiKey.length > 0)
+            .map(entry =>
+                api.post('/api/ai/credentials', {
+                    provider: entry.provider,
+                    apiKey: entry.apiKey,
+                })
+            );
+
+        if (pendingWrites.length === 0) return;
+        await Promise.all(pendingWrites);
+    }
+
     async function testConnection() {
         setTesting(true);
         setTestResult(null);
@@ -178,17 +298,16 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
         try {
             const currentSettings = settings[activeProvider];
-            const isLocalProvider = activeProvider === 'ollama' || activeProvider === 'lmstudio';
-
-            if (!isLocalProvider && !currentSettings.apiKey) {
-                throw new Error('API key is required');
-            }
-
-            await api.post('/api/test-connection', {
+            const payload: { provider: AIProviderType; baseUrl?: string; apiKey?: string } = {
                 provider: activeProvider,
                 baseUrl: currentSettings.baseUrl,
-                apiKey: currentSettings.apiKey,
-            });
+            };
+
+            if (currentSettings.apiKey.trim().length > 0) {
+                payload.apiKey = currentSettings.apiKey.trim();
+            }
+
+            await api.post('/api/test-connection', payload);
 
             setTestResult('success');
         } catch (err) {
@@ -199,19 +318,31 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         }
     }
 
-    function saveAndContinue() {
-        // Save settings to secure storage
-        const data = {
-            ...settings,
-            activeProvider,
-        };
+    async function saveAndContinue() {
+        setSaving(true);
+        setTestResult(null);
+        setTestError(null);
 
-        secureStorage.setSessionItem(STORAGE_KEY, data);
-        secureStorage.setSecureItem(STORAGE_KEY, data);
+        try {
+            await persistEnteredApiKeys(settings);
 
-        // Move to loading/summary step
-        setStep('loading');
-        generateSummary();
+            // Persist non-sensitive provider choices locally.
+            const data: StoredSettings = {
+                ...toPersistedSettings(settings),
+                activeProvider,
+            };
+            secureStorage.setSessionItem(STORAGE_KEY, data);
+            secureStorage.setSecureItem(STORAGE_KEY, data);
+
+            // Move to loading/summary step.
+            setStep('loading');
+            generateSummary();
+        } catch (error) {
+            setTestResult('error');
+            setTestError(error instanceof Error ? error.message : 'Failed to save API credentials');
+        } finally {
+            setSaving(false);
+        }
     }
 
     async function generateSummary() {
@@ -229,7 +360,6 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
             const currentSettings = settings[activeProvider];
             const response = await api.postStream(`/api/repos/${repoData.id}/summarize`, {
                 provider: activeProvider,
-                apiKey: currentSettings.apiKey,
                 model: currentSettings.model,
                 baseUrl: currentSettings.baseUrl,
             }, {
@@ -279,11 +409,11 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         }
     }
 
-    const providers: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
     const currentSettings = settings[activeProvider];
     const models = getAvailableModels(activeProvider);
     const isLocalProvider = activeProvider === 'ollama' || activeProvider === 'lmstudio';
-    const canContinue = isLocalProvider || (currentSettings.apiKey && currentSettings.apiKey.length > 10);
+    const hasStoredCredential = Boolean(storedCredentials[activeProvider]);
+    const canContinue = isLocalProvider || hasStoredCredential || currentSettings.apiKey.trim().length > 10;
 
     // Show error state if fetch failed
     if (fetchError && step === 'config') {
@@ -330,7 +460,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                     <div className={styles.content}>
                         {/* Provider Tabs */}
                         <div className={styles.tabs}>
-                            {providers.map(provider => (
+                            {PROVIDERS.map(provider => (
                                 <button
                                     key={provider}
                                     className={`${styles.tab} ${activeProvider === provider ? styles.tabActive : ''}`}
@@ -359,6 +489,11 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                                         value={currentSettings.apiKey}
                                         onChange={e => updateSetting(activeProvider, 'apiKey', e.target.value)}
                                     />
+                                    {hasStoredCredential && (
+                                        <small style={{ color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                                            A stored key is available for this provider in your current session.
+                                        </small>
+                                    )}
                                 </div>
                             ) : (
                                 <div className={styles.field}>
@@ -393,7 +528,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                                 <button
                                     className={`btn btn-secondary ${styles.testBtn}`}
                                     onClick={testConnection}
-                                    disabled={testing || (!isLocalProvider && !currentSettings.apiKey)}
+                                    disabled={testing}
                                 >
                                     {testing ? (
                                         <>
@@ -426,10 +561,15 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                         </button>
                         <button
                             className="btn btn-primary"
-                            onClick={saveAndContinue}
-                            disabled={!canContinue || fetchingRepo}
+                            onClick={() => void saveAndContinue()}
+                            disabled={saving || !canContinue || fetchingRepo}
                         >
-                            {fetchingRepo ? (
+                            {saving ? (
+                                <>
+                                    <RefreshCw size={16} className={styles.spinner} />
+                                    Saving...
+                                </>
+                            ) : fetchingRepo ? (
                                 <>
                                     <RefreshCw size={16} className={styles.spinner} />
                                     Fetching...

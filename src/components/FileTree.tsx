@@ -1,6 +1,6 @@
 
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, File, FileCode, FileText, FileJson, FileType, Image, Cog } from 'lucide-react';
 import styles from './FileTree.module.css';
 import type { FileData } from '@/types';
@@ -212,7 +212,7 @@ function TreeNodeComponent({
     );
 }
 
-export default function FileTree({ files, selectedFile, onSelectFile }: FileTreeProps) {
+export default memo(function FileTree({ files, selectedFile, onSelectFile }: FileTreeProps) {
     // Filter to only files that should be shown
     const visibleFiles = files.filter(f => f.shouldFetchContent || f.hasContent);
 
@@ -269,4 +269,4 @@ export default function FileTree({ files, selectedFile, onSelectFile }: FileTree
             ))}
         </div>
     );
-}
+});

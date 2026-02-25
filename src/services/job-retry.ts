@@ -198,19 +198,30 @@ export async function getRetryStats() {
   const database = getDb();
 
   try {
-    const jobs = await database.select().from(ingestJobs);
+    const result = await database.select({
+      total: sql<number>`count(*)`,
+      pending: sql<number>`sum(case when ${ingestJobs.status} = 'pending' then 1 else 0 end)`,
+      processing: sql<number>`sum(case when ${ingestJobs.status} = 'processing' then 1 else 0 end)`,
+      completed: sql<number>`sum(case when ${ingestJobs.status} = 'completed' then 1 else 0 end)`,
+      failed: sql<number>`sum(case when ${ingestJobs.status} = 'failed' then 1 else 0 end)`,
+      retriedPending: sql<number>`sum(case when ${ingestJobs.status} = 'pending' and coalesce(${ingestJobs.retryCount}, 0) > 0 then 1 else 0 end)`,
+      retriedProcessing: sql<number>`sum(case when ${ingestJobs.status} = 'processing' and coalesce(${ingestJobs.retryCount}, 0) > 0 then 1 else 0 end)`,
+      retriedCompleted: sql<number>`sum(case when ${ingestJobs.status} = 'completed' and coalesce(${ingestJobs.retryCount}, 0) > 0 then 1 else 0 end)`,
+      permanentlyFailed: sql<number>`sum(case when ${ingestJobs.status} = 'failed' and coalesce(${ingestJobs.retryCount}, 0) >= 3 then 1 else 0 end)`,
+    }).from(ingestJobs);
 
+    const row = result[0];
     return {
-      total: jobs.length,
-      pending: jobs.filter((j) => j.status === 'pending').length,
-      processing: jobs.filter((j) => j.status === 'processing').length,
-      completed: jobs.filter((j) => j.status === 'completed').length,
-      failed: jobs.filter((j) => j.status === 'failed').length,
+      total: Number(row?.total || 0),
+      pending: Number(row?.pending || 0),
+      processing: Number(row?.processing || 0),
+      completed: Number(row?.completed || 0),
+      failed: Number(row?.failed || 0),
       retried: {
-        pending: jobs.filter((j) => j.status === 'pending' && (j.retryCount || 0) > 0).length,
-        processing: jobs.filter((j) => j.status === 'processing' && (j.retryCount || 0) > 0).length,
-        completed: jobs.filter((j) => j.status === 'completed' && (j.retryCount || 0) > 0).length,
-        permanentlyFailed: jobs.filter((j) => j.status === 'failed' && (j.retryCount || 0) >= 3).length,
+        pending: Number(row?.retriedPending || 0),
+        processing: Number(row?.retriedProcessing || 0),
+        completed: Number(row?.retriedCompleted || 0),
+        permanentlyFailed: Number(row?.permanentlyFailed || 0),
       }
     };
   } catch (error) {

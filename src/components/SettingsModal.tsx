@@ -1,5 +1,3 @@
-
-
 import { useState, useEffect } from 'react';
 import { X, Key, Check, AlertCircle, Loader2, Zap } from 'lucide-react';
 import styles from './SettingsModal.module.css';
@@ -19,9 +17,15 @@ interface ProviderSettings {
     baseUrl?: string;
 }
 
-const STORAGE_KEY = 'ai_settings';
+interface PersistedProviderSettings {
+    model: string;
+    baseUrl?: string;
+}
 
-interface StoredSettings extends Record<AIProviderType, ProviderSettings> {
+const STORAGE_KEY = 'ai_settings';
+const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
+
+interface StoredSettings extends Record<AIProviderType, PersistedProviderSettings> {
     activeProvider?: AIProviderType;
     autoExplain?: boolean;
 }
@@ -35,9 +39,8 @@ function normalizeProviderModel(provider: AIProviderType, model: string): string
     return GEMINI_LEGACY_MODEL_ALIASES[model] || model;
 }
 
-export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-    const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
-    const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>({
+function getDefaultSettings(): Record<AIProviderType, ProviderSettings> {
+    return {
         gemini: { apiKey: '', model: 'gemini-3.1-pro' },
         openai: { apiKey: '', model: 'gpt-5.2' },
         anthropic: { apiKey: '', model: 'claude-sonnet-4.6' },
@@ -45,86 +48,114 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         lmstudio: { apiKey: '', model: 'deepseek-r1-distill-llama-8b', baseUrl: 'http://127.0.0.1:1234/v1' },
         glm: { apiKey: '', model: 'glm-5', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
         kimi: { apiKey: '', model: 'kimi-k2.5', baseUrl: 'https://api.moonshot.cn/v1' },
-    });
+    };
+}
+
+function mergePersistedSettings(
+    defaults: Record<AIProviderType, ProviderSettings>,
+    saved: Partial<Record<AIProviderType, PersistedProviderSettings>>
+): Record<AIProviderType, ProviderSettings> {
+    const merged: Record<AIProviderType, ProviderSettings> = { ...defaults };
+
+    for (const provider of PROVIDERS) {
+        const next = saved[provider];
+        if (!next) continue;
+        merged[provider] = {
+            ...merged[provider],
+            model: next.model || merged[provider].model,
+            baseUrl: next.baseUrl || merged[provider].baseUrl,
+            apiKey: '',
+        };
+    }
+
+    merged.gemini = {
+        ...merged.gemini,
+        model: normalizeProviderModel('gemini', merged.gemini.model),
+    };
+
+    return merged;
+}
+
+function toPersistedSettings(
+    settings: Record<AIProviderType, ProviderSettings>
+): Record<AIProviderType, PersistedProviderSettings> {
+    return {
+        gemini: { model: settings.gemini.model, baseUrl: settings.gemini.baseUrl },
+        openai: { model: settings.openai.model, baseUrl: settings.openai.baseUrl },
+        anthropic: { model: settings.anthropic.model, baseUrl: settings.anthropic.baseUrl },
+        ollama: { model: settings.ollama.model, baseUrl: settings.ollama.baseUrl },
+        lmstudio: { model: settings.lmstudio.model, baseUrl: settings.lmstudio.baseUrl },
+        glm: { model: settings.glm.model, baseUrl: settings.glm.baseUrl },
+        kimi: { model: settings.kimi.model, baseUrl: settings.kimi.baseUrl },
+    };
+}
+
+function clearApiKeys(
+    settings: Record<AIProviderType, ProviderSettings>
+): Record<AIProviderType, ProviderSettings> {
+    return {
+        gemini: { ...settings.gemini, apiKey: '' },
+        openai: { ...settings.openai, apiKey: '' },
+        anthropic: { ...settings.anthropic, apiKey: '' },
+        ollama: { ...settings.ollama, apiKey: '' },
+        lmstudio: { ...settings.lmstudio, apiKey: '' },
+        glm: { ...settings.glm, apiKey: '' },
+        kimi: { ...settings.kimi, apiKey: '' },
+    };
+}
+
+export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+    const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
+    const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>(getDefaultSettings);
     const [detectedModels, setDetectedModels] = useState<Partial<Record<AIProviderType, string[]>>>({});
+    const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
     const [testError, setTestError] = useState<string | null>(null);
     const [autoExplain, setAutoExplain] = useState(false);
 
-    // Load settings from secure storage on mount
+    // Load non-sensitive settings from storage on mount.
     useEffect(() => {
         const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
         if (sessionData) {
-            setSettings(prev => {
-                const merged = { ...prev, ...sessionData };
-                return {
-                    ...merged,
-                    gemini: {
-                        ...merged.gemini,
-                        model: normalizeProviderModel('gemini', merged.gemini.model),
-                    },
-                };
-            });
-            if (sessionData.activeProvider) setActiveProvider(sessionData.activeProvider);
-            if (sessionData.autoExplain) setAutoExplain(sessionData.autoExplain);
+            const merged = mergePersistedSettings(getDefaultSettings(), sessionData);
+            const migrated: StoredSettings = {
+                ...toPersistedSettings(merged),
+                activeProvider: sessionData.activeProvider,
+                autoExplain: sessionData.autoExplain,
+            };
+
+            setSettings(merged);
+            secureStorage.setSessionItem(STORAGE_KEY, migrated);
+            secureStorage.setSecureItem(STORAGE_KEY, migrated);
+
+            if (migrated.activeProvider) setActiveProvider(migrated.activeProvider);
+            if (typeof migrated.autoExplain === 'boolean') setAutoExplain(migrated.autoExplain);
             return;
         }
-        // Load from encrypted storage (async)
+
+        // Load from encrypted storage (async).
         secureStorage.getSecureItem<StoredSettings>(STORAGE_KEY).then(saved => {
-            if (saved) {
-                setSettings(prev => {
-                    const merged = { ...prev, ...saved };
-                    return {
-                        ...merged,
-                        gemini: {
-                            ...merged.gemini,
-                            model: normalizeProviderModel('gemini', merged.gemini.model),
-                        },
-                    };
-                });
-                if (saved.activeProvider) setActiveProvider(saved.activeProvider);
-                if (saved.autoExplain) setAutoExplain(saved.autoExplain);
-                // Also populate session storage so sync reads work this session
-                secureStorage.setSessionItem(STORAGE_KEY, saved);
-            }
+            if (!saved) return;
+
+            const merged = mergePersistedSettings(getDefaultSettings(), saved);
+            const migrated: StoredSettings = {
+                ...toPersistedSettings(merged),
+                activeProvider: saved.activeProvider,
+                autoExplain: saved.autoExplain,
+            };
+
+            setSettings(merged);
+            if (migrated.activeProvider) setActiveProvider(migrated.activeProvider);
+            if (typeof migrated.autoExplain === 'boolean') setAutoExplain(migrated.autoExplain);
+
+            // Also populate session storage so sync reads work this session.
+            secureStorage.setSessionItem(STORAGE_KEY, migrated);
+            secureStorage.setSecureItem(STORAGE_KEY, migrated);
         });
     }, []);
 
-    // Save settings to secure storage
-    function saveSettings() {
-        const normalizedModel = normalizeProviderModel(activeProvider, settings[activeProvider].model);
-        const normalizedSettings: Record<AIProviderType, ProviderSettings> = {
-            ...settings,
-            [activeProvider]: {
-                ...settings[activeProvider],
-                model: normalizedModel,
-            },
-        };
-
-        const data = {
-            ...normalizedSettings,
-            activeProvider,
-            autoExplain,
-        };
-
-        setSettings(normalizedSettings);
-        secureStorage.setSessionItem(STORAGE_KEY, data);
-        secureStorage.setSecureItem(STORAGE_KEY, data); // fire-and-forget async
-
-        if (typeof window !== 'undefined') {
-            const detail: ToastEventDetail = {
-                kind: 'success',
-                message: `Now using ${normalizedModel} model`,
-                durationMs: 3200,
-            };
-            window.dispatchEvent(new CustomEvent<ToastEventDetail>(TOAST_EVENT_NAME, { detail }));
-        }
-
-        onClose();
-    }
-
-    // Update a specific provider's setting
+    // Update a specific provider setting.
     function updateSetting(provider: AIProviderType, key: keyof ProviderSettings, value: string) {
         setSettings(prev => ({
             ...prev,
@@ -135,7 +166,75 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }));
         setTestResult(null);
     }
-    // Test the current provider connection
+
+    async function persistEnteredApiKeys(current: Record<AIProviderType, ProviderSettings>): Promise<void> {
+        const pendingWrites = PROVIDERS
+            .map(provider => ({
+                provider,
+                apiKey: current[provider].apiKey.trim(),
+            }))
+            .filter(entry => entry.apiKey.length > 0)
+            .map(entry =>
+                api.post('/api/ai/credentials', {
+                    provider: entry.provider,
+                    apiKey: entry.apiKey,
+                })
+            );
+
+        if (pendingWrites.length === 0) return;
+        await Promise.all(pendingWrites);
+    }
+
+    // Save settings and securely persist entered keys server-side.
+    async function saveSettings() {
+        setSaving(true);
+        setTestResult(null);
+        setTestError(null);
+
+        const normalizedModel = normalizeProviderModel(activeProvider, settings[activeProvider].model);
+        const normalizedSettings: Record<AIProviderType, ProviderSettings> = {
+            ...settings,
+            [activeProvider]: {
+                ...settings[activeProvider],
+                model: normalizedModel,
+            },
+        };
+
+        try {
+            await persistEnteredApiKeys(normalizedSettings);
+
+            const persistedProviders = toPersistedSettings(normalizedSettings);
+            const persistedSettings: StoredSettings = {
+                ...persistedProviders,
+                activeProvider,
+                autoExplain,
+            };
+
+            secureStorage.setSessionItem(STORAGE_KEY, persistedSettings);
+            secureStorage.setSecureItem(STORAGE_KEY, persistedSettings); // fire-and-forget async
+
+            // Clear keys from component state after secure server-side persistence.
+            setSettings(clearApiKeys(normalizedSettings));
+
+            if (typeof window !== 'undefined') {
+                const detail: ToastEventDetail = {
+                    kind: 'success',
+                    message: `Now using ${normalizedModel} model`,
+                    durationMs: 3200,
+                };
+                window.dispatchEvent(new CustomEvent<ToastEventDetail>(TOAST_EVENT_NAME, { detail }));
+            }
+
+            onClose();
+        } catch (error) {
+            setTestResult('error');
+            setTestError(error instanceof Error ? error.message : 'Failed to save secure settings');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    // Test the current provider connection.
     async function testConnection() {
         setTesting(true);
         setTestResult(null);
@@ -143,21 +242,19 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
         try {
             const currentSettings = settings[activeProvider];
-            const isLocalProvider = activeProvider === 'ollama' || activeProvider === 'lmstudio';
-
-            // Validate API key for non-local providers
-            if (!isLocalProvider && !currentSettings.apiKey) {
-                throw new Error('API key is required');
-            }
-
-            // Use our backend API to test connection (avoids CORS issues)
-            const data = await api.post<{
-                models?: string[];
-            }>('/api/test-connection', {
+            const payload: { provider: AIProviderType; baseUrl?: string; apiKey?: string } = {
                 provider: activeProvider,
                 baseUrl: currentSettings.baseUrl,
-                apiKey: currentSettings.apiKey,
-            });
+            };
+
+            if (currentSettings.apiKey.trim().length > 0) {
+                payload.apiKey = currentSettings.apiKey.trim();
+            }
+
+            // Use backend API to test connection and model listing.
+            const data = await api.post<{
+                models?: string[];
+            }>('/api/test-connection', payload);
 
             setTestResult('success');
             if (data.models?.length) {
@@ -184,9 +281,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                 setTestError(`Found ${data.models.length} model(s): ${data.models.slice(0, 3).join(', ')}${data.models.length > 3 ? '...' : ''}`);
             }
-        } catch (err) {
+        } catch (error) {
             setTestResult('error');
-            setTestError(err instanceof Error ? err.message : 'Connection failed');
+            setTestError(error instanceof Error ? error.message : 'Connection failed');
         } finally {
             setTesting(false);
         }
@@ -194,9 +291,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     if (!isOpen) return null;
 
-    const providers: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
     const currentSettings = settings[activeProvider];
     const models = detectedModels[activeProvider] || getAvailableModels(activeProvider);
+    const isLocalProvider = activeProvider === 'ollama' || activeProvider === 'lmstudio';
 
     return (
         <div className={styles.overlay} onClick={onClose}>
@@ -210,7 +307,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                 <div className={styles.content}>
                     <p className={styles.description}>
-                        Personalize your AI experience. Choose your preferred provider, configure API keys, and manage how the application interacts with your codebase. All settings are encrypted and stored locally in your browser for maximum privacy.
+                        Choose your provider and models. API keys are kept in memory while editing and stored server-side using encrypted, session-scoped storage after saving.
                     </p>
 
                     <div className={styles.sectionHeader}>
@@ -219,7 +316,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                     {/* Provider Tabs */}
                     <div className={styles.tabs}>
-                        {providers.map(provider => (
+                        {PROVIDERS.map(provider => (
                             <button
                                 key={provider}
                                 className={`${styles.tab} ${activeProvider === provider ? styles.tabActive : ''}`}
@@ -235,7 +332,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                     {/* Settings Form */}
                     <div className={styles.form}>
-                        {activeProvider !== 'ollama' && activeProvider !== 'lmstudio' ? (
+                        {!isLocalProvider ? (
                             <div className={styles.field}>
                                 <label className={styles.label}>
                                     <Key size={14} />
@@ -247,7 +344,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     placeholder={`Enter your ${PROVIDER_NAMES[activeProvider]} API key`}
                                     value={currentSettings.apiKey}
                                     onChange={e => updateSetting(activeProvider, 'apiKey', e.target.value)}
+                                    autoComplete="off"
                                 />
+                                <small style={{ color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                                    Leave blank to keep the previously stored key for this session.
+                                </small>
                             </div>
                         ) : (
                             <div className={styles.field}>
@@ -263,7 +364,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         )}
 
                         {/* Custom Model Input for local providers */}
-                        {(activeProvider === 'ollama' || activeProvider === 'lmstudio') && (
+                        {isLocalProvider && (
                             <div className={styles.field}>
                                 <label className={styles.label}>Custom Model Name (optional)</label>
                                 <input
@@ -274,7 +375,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     onChange={e => updateSetting(activeProvider, 'model', e.target.value)}
                                 />
                                 <small style={{ color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                                    Leave empty to use default, or enter your model name
+                                    Leave empty to use default, or enter your model name.
                                 </small>
                             </div>
                         )}
@@ -356,8 +457,15 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <button className="btn btn-secondary" onClick={onClose}>
                         Cancel
                     </button>
-                    <button className="btn btn-primary" onClick={saveSettings}>
-                        Save Settings
+                    <button className="btn btn-primary" onClick={saveSettings} disabled={saving}>
+                        {saving ? (
+                            <>
+                                <Loader2 size={16} className={styles.spinner} />
+                                Saving...
+                            </>
+                        ) : (
+                            'Save Settings'
+                        )}
                     </button>
                 </div>
             </div>
@@ -365,7 +473,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     );
 }
 
-// Helper to get current AI settings (sync — reads from sessionStorage only)
+// Helper to get current AI settings (sync — reads from sessionStorage only).
 export function getAISettings(): { provider: AIProviderType; config: ProviderSettings } | null {
     if (typeof window === 'undefined') return null;
 
@@ -377,7 +485,8 @@ export function getAISettings(): { provider: AIProviderType; config: ProviderSet
             return {
                 provider,
                 config: {
-                    ...config,
+                    apiKey: '',
+                    baseUrl: config.baseUrl,
                     model: normalizeProviderModel(provider, config.model),
                 },
             };

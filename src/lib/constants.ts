@@ -49,6 +49,13 @@ export const GITHUB = {
     MAX_COMMITS_PER_REPO: 5000,
 } as const;
 
+// Ingestion settings
+export const INGEST = {
+    MASSIVE_REPO_SIZE_KB: 100_000,
+    LATEST_COMMITS_TO_PREFETCH_DEFAULT: 1,
+    FILE_BATCH_INSERT_SIZE: 500,
+} as const;
+
 // File extensions recognized as source code (for content fetching/display)
 export const CODE_EXTENSIONS = new Set([
     '.js', '.jsx', '.ts', '.tsx', '.py', '.rs', '.go', '.java',

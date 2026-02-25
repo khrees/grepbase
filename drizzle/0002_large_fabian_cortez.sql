@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `idx_files_commit_path` ON `files` (`commit_id`,`path`);

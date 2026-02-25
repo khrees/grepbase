@@ -11,7 +11,10 @@ import SettingsModal from '@/components/SettingsModal';
 import { getAISettings } from '@/components/SettingsModal';
 import CalendarTimeline from '@/components/CalendarTimeline';
 import { api } from '@/lib/api-client';
-import { fetchAllCommitsForRepository } from '@/lib/commit-pagination';
+import {
+    fetchCommitsPageForRepository,
+    fetchInitialCommitsForRepository,
+} from '@/lib/commit-pagination';
 
 interface Repository {
     id: number;
@@ -38,6 +41,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     const [repository, setRepository] = useState<Repository | null>(null);
     const [commits, setCommits] = useState<Commit[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
 
@@ -48,14 +52,73 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     const [summaryLoading, setSummaryLoading] = useState(false);
     const [daySummary, setDaySummary] = useState('');
 
+    const commitPrefetchRequestRef = useRef(0);
+
+    const appendUniqueCommits = useCallback((incoming: Commit[]) => {
+        if (incoming.length === 0) return;
+        setCommits(prev => {
+            const seenShas = new Set(prev.map(commit => commit.sha));
+            const additions = incoming.filter(commit => !seenShas.has(commit.sha));
+            if (additions.length === 0) return prev;
+            return [...prev, ...additions];
+        });
+    }, []);
+
+    const prefetchRemainingCommits = useCallback((startPage: number) => {
+        const requestId = commitPrefetchRequestRef.current + 1;
+        commitPrefetchRequestRef.current = requestId;
+
+        if (startPage <= 1) {
+            setLoadingMoreCommits(false);
+            return;
+        }
+
+        setLoadingMoreCommits(true);
+
+        const load = async () => {
+            let page = startPage;
+            let hasNext = true;
+
+            while (hasNext && commitPrefetchRequestRef.current === requestId) {
+                const pageData = await fetchCommitsPageForRepository(id, page);
+                if (commitPrefetchRequestRef.current !== requestId) {
+                    return;
+                }
+
+                appendUniqueCommits(pageData.commits);
+                hasNext = Boolean(pageData.pagination?.hasNext);
+                page += 1;
+            }
+        };
+
+        void load()
+            .catch((prefetchError) => {
+                if (commitPrefetchRequestRef.current !== requestId) return;
+                console.warn('Timeline commit prefetch stopped:', prefetchError);
+            })
+            .finally(() => {
+                if (commitPrefetchRequestRef.current === requestId) {
+                    setLoadingMoreCommits(false);
+                }
+            });
+    }, [appendUniqueCommits, id]);
+
     // Fetch repository and commits on mount
     useEffect(() => {
         async function fetchData() {
+            commitPrefetchRequestRef.current += 1;
+            setLoadingMoreCommits(false);
+
             try {
-                const data = await fetchAllCommitsForRepository(id);
+                const data = await fetchInitialCommitsForRepository(id);
 
                 setRepository(data.repository);
                 setCommits(data.commits);
+
+                if (data.pagination?.hasNext) {
+                    prefetchRemainingCommits((data.pagination.page || 1) + 1);
+                }
+
                 setLoading(false);
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -63,8 +126,12 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
             }
         }
 
-        fetchData();
-    }, [id]);
+        void fetchData();
+
+        return () => {
+            commitPrefetchRequestRef.current += 1;
+        };
+    }, [id, prefetchRemainingCommits]);
 
     const totalCommits = commits.length;
     const activeDays = useMemo(() => {
@@ -134,7 +201,6 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                 repoId: Number(id),
                 provider: {
                     type: aiSettings.provider,
-                    apiKey: aiSettings.config.apiKey,
                     model: aiSettings.config.model,
                     baseUrl: aiSettings.config.baseUrl,
                 },
@@ -262,7 +328,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                     </div>
                     <span className={styles.headerBadge}>
                         <CalendarIcon size={14} />
-                        Timeline View
+                        {loadingMoreCommits ? 'Timeline View (loading more...)' : 'Timeline View'}
                     </span>
                 </div>
 

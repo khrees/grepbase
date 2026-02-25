@@ -1,29 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { AIProviderConfig } from '@/services/ai-providers';
 import { explainRequestSchema } from '@/lib/validation';
 import { logger } from '@/lib/logger';
-import { rateLimiter } from '@/lib/rate-limit';
 import { RATE_LIMITS, AI_CONSTANTS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
-import { getClientIdFromHeaders } from '../utils';
+import {
+    applyPrivateNoStoreHeaders,
+    enforceCsrfProtection,
+    enforceRateLimit,
+    resolveSession,
+} from '@/lib/api-security';
+import { hasRepoAccess } from '@/services/resource-access';
+import { getClientIdFromHeaders, resolveProviderConfigFromRequest } from '../utils';
 
 export async function POST(request: NextRequest) {
     const requestLogger = logger.child({ endpoint: 'POST /api/explain/day-summary' });
     const startTime = Date.now();
 
     try {
-        const clientId = getClientIdFromHeaders(request);
-        const rateLimitResult = await rateLimiter.checkLimit(clientId, RATE_LIMITS.EXPLAIN_API, 60);
-
-        if (!rateLimitResult.success) {
-            requestLogger.warn({ clientId }, 'Rate limit exceeded');
-            await analytics.trackRateLimit({ endpoint: '/api/explain/day-summary', clientId, blocked: true });
-            return NextResponse.json(
-                { error: 'Rate limit exceeded', limit: rateLimitResult.limit, reset: rateLimitResult.reset },
-                { status: 429, headers: { 'X-RateLimit-Limit': rateLimitResult.limit.toString(), 'X-RateLimit-Remaining': rateLimitResult.remaining.toString(), 'X-RateLimit-Reset': rateLimitResult.reset.toString() } }
-            );
+        const csrfError = enforceCsrfProtection(request);
+        if (csrfError) {
+            return csrfError;
         }
 
+        const session = await resolveSession(request);
+        if (!session) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const rateLimitError = await enforceRateLimit(request, {
+            keyPrefix: 'api:explain:day-summary',
+            limit: RATE_LIMITS.EXPLAIN_API,
+            sessionId: session.sessionId,
+        });
+        if (rateLimitError) {
+            const clientId = getClientIdFromHeaders(request);
+            requestLogger.warn({ clientId }, 'Rate limit exceeded');
+            await analytics.trackRateLimit({ endpoint: '/api/explain/day-summary', clientId, blocked: true });
+            return rateLimitError.response;
+        }
+
+        const clientId = getClientIdFromHeaders(request);
         await analytics.trackRateLimit({ endpoint: '/api/explain/day-summary', clientId, blocked: false });
 
         const rawBody = await request.json().catch(() => null);
@@ -33,18 +49,23 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Validation failed', details: parseResult.error.issues }, { status: 400 });
         }
 
-        const { commits: dayCommits, projectName, projectOwner, provider, providerType, apiKey, model, baseUrl } = parseResult.data;
+        const { repoId, commits: dayCommits, projectName, projectOwner, provider, providerType, model, baseUrl } = parseResult.data;
 
         if (parseResult.data.type !== 'day-summary' || !dayCommits || dayCommits.length === 0) {
             return NextResponse.json({ error: 'Invalid request wrapper for day-summary' }, { status: 400 });
         }
 
-        const providerConfig: AIProviderConfig = {
-            type: provider?.type ?? providerType!,
-            apiKey: provider?.apiKey || apiKey,
-            baseUrl: provider?.baseUrl || baseUrl,
-            model: provider?.model || model,
-        };
+        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+        if (!repoAccess) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        const providerConfig = await resolveProviderConfigFromRequest(request, {
+            provider,
+            providerType,
+            baseUrl,
+            model,
+        }, session.sessionId);
 
         const { streamText } = await import('ai');
         const { createAIProviderAsync } = await import('@/services/ai-providers');
@@ -81,12 +102,12 @@ Provide a brief, engaging summary of what was accomplished. Use markdown formatt
         await analytics.trackAIUsage({ provider: providerConfig.type, model: providerConfig.model, type: 'day-summary', success: true, duration });
         await analytics.trackRequest({ endpoint: '/api/explain/day-summary', method: 'POST', statusCode: 200, duration, clientId });
 
-        return response;
+        return applyPrivateNoStoreHeaders(response);
     } catch (error) {
         const duration = Date.now() - startTime;
         const clientId = getClientIdFromHeaders(request);
         await analytics.trackRequest({ endpoint: '/api/explain/day-summary', method: 'POST', statusCode: 500, duration, clientId });
         requestLogger.error({ error }, 'Error generating explanation');
-        return NextResponse.json({ error: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to generate summary' }, { status: 500 });
     }
 }

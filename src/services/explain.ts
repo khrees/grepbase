@@ -7,6 +7,12 @@ import { streamText } from 'ai';
 import { createAIProviderAsync, type AIProviderConfig } from './ai-providers';
 import { cache, CACHE_TTL } from './cache';
 
+function sanitizePromptInput(text: string, maxLength: number): string {
+    // Strip control characters except newlines and tabs
+    const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+    return cleaned.length > maxLength ? cleaned.slice(0, maxLength) : cleaned;
+}
+
 // Helper to return cached text in the same format as toTextStreamResponse()
 function createCachedResponse(text: string): Response {
     const encoder = new TextEncoder();
@@ -112,8 +118,8 @@ export async function explainCommit(
 
     const systemPrompt = `You are an expert code reviewer guiding developers through a codebase's evolution.
 
-Project: ${project.name}
-${project.description ? `Description: ${project.description}` : ''}
+Project: ${sanitizePromptInput(project.name, 200)}
+${project.description ? `Description: ${sanitizePromptInput(project.description, 1000)}` : ''}
 Progress: Commit ${project.currentCommitIndex} of ${project.totalCommits}
 
 Analyze this commit within the context of the repository at this point in time. Explain intent, implementation details, and impact with enough technical depth for an engineer onboarding to the codebase.
@@ -140,8 +146,8 @@ Output requirements:
 
 **Short Commit Title (max 50 chars):** ${shortCommitTitle}
 **Commit SHA:** ${commit.sha.substring(0, 7)}
-**Message:** ${commit.message}
-**Author:** ${commit.authorName || 'Unknown'}
+**Message:** ${sanitizePromptInput(commit.message, 2000)}
+**Author:** ${sanitizePromptInput(commit.authorName || 'Unknown', 200)}
 **Date:** ${commit.date.toLocaleDateString()}
 
 **Changed Files (Openable in UI):**
@@ -182,8 +188,8 @@ export async function explainFile(
 
     const systemPrompt = `You are an expert code reviewer helping developers understand a codebase.
 
-Project: ${project.name}
-${project.description ? `Description: ${project.description}` : ''}
+Project: ${sanitizePromptInput(project.name, 200)}
+${project.description ? `Description: ${sanitizePromptInput(project.description, 1000)}` : ''}
 
 Explain this code file clearly and concisely. Focus on:
 1. What the file does
@@ -237,11 +243,11 @@ Help developers understand what this project does and how to start contributing.
 
     const userPrompt = `Give me a beginner-friendly overview of this project:
 
-**Project:** ${project.name}
-**Description:** ${project.description || 'No description'}
+**Project:** ${sanitizePromptInput(project.name, 200)}
+**Description:** ${sanitizePromptInput(project.description || 'No description', 1000)}
 **Total Commits:** ${project.totalCommits}
 
-${project.readme ? `**README:**\n${project.readme.substring(0, 5000)}${project.readme.length > 5000 ? '\n... (truncated)' : ''}` : 'No README available.'}
+${project.readme ? `**README:**\n${sanitizePromptInput(project.readme, 5000)}` : 'No README available.'}
 
 Please explain:
 1. What this project does (in simple terms)
@@ -303,8 +309,8 @@ Output requirements:
   - Technical implications
 - End with a short "What's next" section with concrete follow-up directions.`;
 
-    const userPrompt = `Project: ${project.name}
-${project.description ? `Description: ${project.description}` : ''}
+    const userPrompt = `Project: ${sanitizePromptInput(project.name, 200)}
+${project.description ? `Description: ${sanitizePromptInput(project.description, 1000)}` : ''}
 Total commits in project: ${project.totalCommits}
 Commits in this story range: ${commits.length}
 
@@ -355,7 +361,7 @@ export async function answerQuestion(
     let contextText = `Project: ${context.project.name}\n`;
 
     if (context.commit) {
-        contextText += `\nCurrent Commit: ${context.commit.sha.substring(0, 7)} - ${context.commit.message}`;
+        contextText += `\nCurrent Commit: ${context.commit.sha.substring(0, 7)} - ${sanitizePromptInput(context.commit.message, 2000)}`;
         if (context.commit.availableFiles && context.commit.availableFiles.length > 0) {
             const visibleFiles = context.commit.availableFiles.slice(0, 200).join('\n');
             contextText += `\nVisible Files (openable in UI):\n${visibleFiles}`;

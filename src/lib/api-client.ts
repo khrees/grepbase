@@ -6,6 +6,8 @@
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const CSRF_HEADER_NAME = 'x-grepbase-csrf';
+const CSRF_HEADER_VALUE = '1';
 
 export interface APIError {
   error: string;
@@ -56,6 +58,9 @@ export class APIClient {
   async post<T>(path: string, body?: unknown): Promise<T> {
     return this.request<T>(path, {
       method: 'POST',
+      headers: {
+        [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
   }
@@ -63,12 +68,20 @@ export class APIClient {
   async put<T>(path: string, body?: unknown): Promise<T> {
     return this.request<T>(path, {
       method: 'PUT',
+      headers: {
+        [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
   }
 
   async delete<T>(path: string): Promise<T> {
-    return this.request<T>(path, { method: 'DELETE' });
+    return this.request<T>(path, {
+      method: 'DELETE',
+      headers: {
+        [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
+      },
+    });
   }
 
   /**
@@ -82,6 +95,7 @@ export class APIClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,
         ...optionHeaders,
       },
       body: body ? JSON.stringify(body) : undefined,

@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { repositories, commits } from '@/db';
 import { eq, asc, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
-import { PAGINATION } from '@/lib/constants';
+import { PAGINATION, RATE_LIMITS } from '@/lib/constants';
 import { getDb } from '@/db';
+import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
+import { hasRepoAccess } from '@/services/resource-access';
 
 /**
  * GET /api/repos/:id/commits - List commits for a repository
@@ -16,12 +18,32 @@ export async function GET(
     const db = getDb();
 
     try {
+        const session = await resolveSession(request);
+        if (!session) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const rateLimitError = await enforceRateLimit(request, {
+            keyPrefix: 'api:repos:commits:get',
+            limit: RATE_LIMITS.GENERAL_API,
+            sessionId: session.sessionId,
+        });
+        if (rateLimitError) {
+            return rateLimitError.response;
+        }
+
         const { id } = await params;
         const repoId = parseInt(id, 10);
 
         if (isNaN(repoId)) {
             requestLogger.warn({ id }, 'Invalid repository ID');
             return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
+        }
+
+        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+        if (!repoAccess) {
+            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
         // Parse pagination params from query string
@@ -64,18 +86,20 @@ export async function GET(
 
         requestLogger.info({ repoId, page, limit, total }, 'Commits fetched successfully');
 
-        return NextResponse.json({
-            repository: repo[0],
-            commits: repoCommits,
-            pagination: {
-                page,
-                limit,
-                total,
-                totalPages: Math.ceil(total / limit),
-                hasNext: offset + limit < total,
-                hasPrev: page > 1,
-            },
-        });
+        return applyPrivateNoStoreHeaders(
+            NextResponse.json({
+                repository: repo[0],
+                commits: repoCommits,
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    totalPages: Math.ceil(total / limit),
+                    hasNext: offset + limit < total,
+                    hasPrev: page > 1,
+                },
+            })
+        );
     } catch (error) {
         requestLogger.error(
             { error, errorMessage: error instanceof Error ? error.message : 'Unknown error' },

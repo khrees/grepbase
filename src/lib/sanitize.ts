@@ -19,12 +19,20 @@ export function sanitizeGitHubUrl(url: string): string {
             parsed.protocol = 'https:';
         }
 
-        // Remove any query params or fragments
+        // Strip to only owner/repo, removing trailing segments, query params, and fragments
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        if (parts.length < 2) {
+            throw new Error('Invalid GitHub repository URL');
+        }
+        parsed.pathname = `/${parts[0]}/${parts[1].replace(/\.git$/, '')}`;
         parsed.search = '';
         parsed.hash = '';
 
         return parsed.toString();
-    } catch {
+    } catch (e) {
+        if (e instanceof Error && e.message !== 'Invalid GitHub URL') {
+            throw e;
+        }
         throw new Error('Invalid GitHub URL');
     }
 }

@@ -1,38 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/db';
-import { ingestJobs, repositories } from '@/db';
 import { eq } from 'drizzle-orm';
+import { ingestJobs } from '@/db';
+import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
+import { applyPrivateNoStoreHeaders, resolveSession } from '@/lib/api-security';
+import { hasJobAccess, hasRepoAccess } from '@/services/resource-access';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ jobId: string }> }
 ) {
     const requestLogger = logger.child({ endpoint: '/api/jobs/[jobId]' });
+    const db = getDb();
 
     try {
+        const session = await resolveSession(request);
+        if (!session) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
         const { jobId } = await params;
-        const db = getDb();
+        if (!jobId || jobId.length > 128) {
+            return NextResponse.json({ error: 'Invalid job ID' }, { status: 400 });
+        }
 
         const job = await db.select()
             .from(ingestJobs)
             .where(eq(ingestJobs.jobId, jobId))
             .limit(1);
-
         if (!job || job.length === 0) {
             requestLogger.warn({ jobId }, 'Job not found');
             return NextResponse.json({ error: 'Job not found' }, { status: 404 });
         }
 
         const jobData = job[0];
-        let repository = null;
+        let hasAccess = await hasJobAccess(jobId, session.sessionId);
 
-        if (jobData.repoId) {
-            const repo = await db.select()
-                .from(repositories)
-                .where(eq(repositories.id, jobData.repoId))
-                .limit(1);
-            repository = repo[0] || null;
+        // Compatibility path for older jobs that predate explicit job ownership mapping.
+        if (!hasAccess && jobData.repoId) {
+            hasAccess = await hasRepoAccess(jobData.repoId, session.sessionId);
+        }
+
+        if (!hasAccess) {
+            requestLogger.warn({ jobId, sessionId: session.sessionId }, 'Forbidden job access');
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
         const processedCommits = Number(jobData.processedCommits || 0);
@@ -40,17 +51,20 @@ export async function GET(
             jobData.status === 'completed' ||
             (jobData.status === 'processing' && processedCommits > 0);
 
-        return NextResponse.json({
-            jobId: jobData.jobId,
-            status: jobData.status,
-            progress: jobData.progress,
-            totalCommits: jobData.totalCommits,
-            processedCommits,
-            repository,
-            ready,
-            error: jobData.error,
-            updatedAt: jobData.updatedAt,
-        });
+        return applyPrivateNoStoreHeaders(
+            NextResponse.json({
+                jobId: jobData.jobId,
+                status: jobData.status,
+                progress: jobData.progress,
+                totalCommits: jobData.totalCommits,
+                processedCommits,
+                repoId: jobData.repoId ?? null,
+                repository: null,
+                ready,
+                error: jobData.error,
+                updatedAt: jobData.updatedAt,
+            })
+        );
     } catch (error) {
         requestLogger.error(
             { error, errorMessage: error instanceof Error ? error.message : 'Unknown error' },

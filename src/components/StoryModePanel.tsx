@@ -96,7 +96,6 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
                 chapterSize,
                 provider: {
                     type: settings.provider,
-                    apiKey: settings.config.apiKey,
                     baseUrl: settings.config.baseUrl,
                     model: settings.config.model,
                 },

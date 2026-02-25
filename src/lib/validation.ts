@@ -30,17 +30,8 @@ export const aiProviderConfigSchema = z.object({
     type: z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']),
     apiKey: z.string().optional(),
     baseUrl: z.string().url().optional(),
-    model: z.string().optional(),
-}).refine(
-    (config) => {
-        const localProviders = ['ollama', 'lmstudio'];
-        if (localProviders.includes(config.type)) {
-            return true;
-        }
-        return !!config.apiKey;
-    },
-    { message: 'API key is required for cloud providers' }
-);
+    model: z.string().max(100).optional(),
+});
 
 // AI Provider type enum for reuse
 export const aiProviderTypeSchema = z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']);
@@ -50,12 +41,12 @@ export type AIProviderTypeFromSchema = z.infer<typeof aiProviderTypeSchema>;
 export const explainRequestSchema = z.object({
     type: z.enum(['commit', 'project', 'question', 'day-summary', 'story']),
     repoId: z.number().int().positive(),
-    commitSha: z.string().optional(),
-    startSha: z.string().optional(),
-    endSha: z.string().optional(),
+    commitSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
+    startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
+    endSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
     chapterSize: z.number().int().min(2).max(12).optional(),
-    question: z.string().optional(),
-    visibleFiles: z.array(z.string()).optional(),
+    question: z.string().max(5000).optional(),
+    visibleFiles: z.array(z.string().max(1024)).max(200).optional(),
     provider: aiProviderConfigSchema.optional(),
     // Flat params for backward compatibility
     providerType: aiProviderTypeSchema.optional(),
@@ -64,11 +55,11 @@ export const explainRequestSchema = z.object({
         message: z.string(),
         authorName: z.string().nullable(),
         date: z.string(),
-    })).optional(),
-    projectName: z.string().optional(),
-    projectOwner: z.string().optional(),
+    })).max(200).optional(),
+    projectName: z.string().max(200).optional(),
+    projectOwner: z.string().max(200).optional(),
     apiKey: z.string().optional(),
-    model: z.string().optional(),
+    model: z.string().max(100).optional(),
     baseUrl: z.string().url().optional(),
 }).refine(
     (data) => {
@@ -84,6 +75,15 @@ export const explainRequestSchema = z.object({
         return !!(data.provider?.type || data.providerType);
     },
     { message: 'Either provider.type or providerType is required' }
+).refine(
+    (data) => {
+        const nestedApiKey = data.provider?.apiKey;
+        const flatApiKey = data.apiKey;
+        const hasNestedApiKey = typeof nestedApiKey === 'string' && nestedApiKey.trim().length > 0;
+        const hasFlatApiKey = typeof flatApiKey === 'string' && flatApiKey.trim().length > 0;
+        return !hasNestedApiKey && !hasFlatApiKey;
+    },
+    { message: 'Client API keys are not accepted in explain payloads. Store keys via /api/ai/credentials first.' }
 );
 
 // Repository ingest request

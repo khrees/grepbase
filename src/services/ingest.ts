@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { repositories, commits, files, ingestJobs } from '@/db/schema';
 import {
     fetchRepository,
@@ -8,7 +8,8 @@ import {
 } from './github';
 import { logger } from '@/lib/logger';
 import type { Database } from '@/db/index';
-import { GITHUB } from '@/lib/constants';
+import { GITHUB, INGEST } from '@/lib/constants';
+import { safeGrantRepoAccess } from './resource-access';
 
 interface IngestOptions {
     jobId: string;
@@ -94,6 +95,9 @@ export async function processRepoIngestion({
         const repoId = repoResult[0].id;
         processLogger.info({ repoId }, 'Repository record saved/updated');
 
+        // Bind repository visibility to the originating session owner.
+        await safeGrantRepoAccess(repoId, clientId);
+
         // 5. Fetch commits
         const maxCommits = Math.max(1, GITHUB.MAX_COMMITS_PER_REPO);
         await db.update(ingestJobs)
@@ -144,22 +148,34 @@ export async function processRepoIngestion({
                     order: maxCommits - (processedCommits + i + idx) - 1,
                 }));
 
-                // In SQLite/D1, we can't easily upsert with a complex ON CONFLICT DO UPDATE
-                // without unique constraints. We should assume insert is safe since we
-                // order commits chronologically and this is a full sync, but we should handle conflicts.
-                // D1 doesn't support complex ON CONFLICT so we'll try/catch instead
-                for (const commit of dbCommits) {
+                // Persist each batch in one statement to reduce round-trip overhead.
+                try {
+                    await db
+                        .insert(commits)
+                        .values(dbCommits)
+                        .onConflictDoUpdate({
+                            target: [commits.repoId, commits.sha],
+                            set: {
+                                message: sql`excluded.message`,
+                                authorName: sql`excluded.author_name`,
+                                authorEmail: sql`excluded.author_email`,
+                                date: sql`excluded.date`,
+                                order: sql`excluded."order"`,
+                            },
+                        });
+                } catch (error) {
+                    // Transitional fallback for environments that have not applied the
+                    // composite (repo_id, sha) unique index migration yet.
                     try {
                         await db
                             .insert(commits)
-                            .values(commit)
-                            .onConflictDoUpdate({
-                                target: [commits.sha],
-                                set: commit,
-                            });
-                    } catch (e) {
-                        // Fallback if unique index isn't set up exactly right yet
-                        processLogger.warn({ sha: commit.sha, error: e }, 'Could not upsert commit');
+                            .values(dbCommits)
+                            .onConflictDoNothing();
+                    } catch (fallbackError) {
+                        processLogger.warn(
+                            { error, fallbackError, batchSize: dbCommits.length },
+                            'Could not persist commit batch'
+                        );
                     }
                 }
             }
@@ -204,7 +220,8 @@ export async function processRepoIngestion({
             })
             .where(eq(ingestJobs.jobId, jobId));
 
-        const latestCommitsToProcess = latestCommitShas.length;
+        const isMassiveRepo = repoDetails.size > INGEST.MASSIVE_REPO_SIZE_KB;
+        const latestCommitsToProcess = isMassiveRepo ? 0 : Math.min(INGEST.LATEST_COMMITS_TO_PREFETCH_DEFAULT, latestCommitShas.length);
         processLogger.debug(`Pre-fetching files for latest ${latestCommitsToProcess} commits`);
 
         for (let i = 0; i < latestCommitsToProcess; i++) {
@@ -215,7 +232,7 @@ export async function processRepoIngestion({
                 const dbCommit = await db
                     .select()
                     .from(commits)
-                    .where(eq(commits.sha, sha))
+                    .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
                     .limit(1);
 
                 if (dbCommit.length > 0) {
@@ -235,7 +252,7 @@ export async function processRepoIngestion({
 
                     if (filesToSave.length > 0) {
                         // Save in batches
-                        const FILE_BATCH_SIZE = 100;
+                        const FILE_BATCH_SIZE = INGEST.FILE_BATCH_INSERT_SIZE;
                         for (let j = 0; j < filesToSave.length; j += FILE_BATCH_SIZE) {
                             const fileBatch = filesToSave.slice(j, j + FILE_BATCH_SIZE);
                             await db.insert(files).values(fileBatch);

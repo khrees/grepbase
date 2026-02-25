@@ -10,10 +10,21 @@ import type {
   PlatformEnv,
   PlatformStorage,
   PlatformCache,
-  PlatformAnalytics,
-  PlatformContext,
 } from './types';
 import { createHttpD1 } from '@/db/http';
+
+function encodePathSegment(value: string): string {
+  return encodeURIComponent(value).replace(/\./g, '%2E');
+}
+
+function encodeObjectKey(key: string): string {
+  return key
+    .replace(/^\/+/, '')
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .map((segment) => segment.replace(/\./g, '%2E'))
+    .join('/');
+}
 
 /**
  * Get HTTP-based platform environment
@@ -85,7 +96,9 @@ class HttpR2Storage implements PlatformStorage {
   ) { }
 
   async get(key: string): Promise<ReadableStream | null> {
-    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${this.bucketName}/${key}`;
+    const safeBucket = encodePathSegment(this.bucketName);
+    const safeKey = encodeObjectKey(key);
+    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${safeBucket}/${safeKey}`;
 
     const response = await fetch(url, {
       headers: {
@@ -102,7 +115,9 @@ class HttpR2Storage implements PlatformStorage {
     value: ReadableStream | string | Uint8Array,
     metadata?: Record<string, string>
   ): Promise<void> {
-    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${this.bucketName}/${key}`;
+    const safeBucket = encodePathSegment(this.bucketName);
+    const safeKey = encodeObjectKey(key);
+    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${safeBucket}/${safeKey}`;
 
     let body: BodyInit;
     if (typeof value === 'string') {
@@ -120,11 +135,22 @@ class HttpR2Storage implements PlatformStorage {
       body = new Blob(chunks);
     }
 
+    const metadataHeaders: Record<string, string> = {};
+    for (const [rawKey, rawValue] of Object.entries(metadata || {})) {
+      const normalized = rawKey
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/^-+|-+$/g, '');
+      if (!normalized) continue;
+      metadataHeaders[`x-amz-meta-${normalized}`] = String(rawValue);
+    }
+
     const response = await fetch(url, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${this.apiToken}`,
-        ...metadata,
+        ...metadataHeaders,
       },
       body,
     });
@@ -135,7 +161,9 @@ class HttpR2Storage implements PlatformStorage {
   }
 
   async delete(key: string): Promise<void> {
-    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${this.bucketName}/${key}`;
+    const safeBucket = encodePathSegment(this.bucketName);
+    const safeKey = encodeObjectKey(key);
+    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${safeBucket}/${safeKey}`;
 
     await fetch(url, {
       method: 'DELETE',
@@ -146,7 +174,9 @@ class HttpR2Storage implements PlatformStorage {
   }
 
   async exists(key: string): Promise<boolean> {
-    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${this.bucketName}/${key}`;
+    const safeBucket = encodePathSegment(this.bucketName);
+    const safeKey = encodeObjectKey(key);
+    const url = `https://${this.accountId}.r2.cloudflarestorage.com/${safeBucket}/${safeKey}`;
 
     const response = await fetch(url, {
       method: 'HEAD',
@@ -171,7 +201,10 @@ class HttpKVCache implements PlatformCache {
   ) { }
 
   async get<T>(key: string): Promise<T | null> {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/storage/kv/namespaces/${this.namespaceId}/values/${key}`;
+    const safeAccountId = encodePathSegment(this.accountId);
+    const safeNamespaceId = encodePathSegment(this.namespaceId);
+    const safeKey = encodePathSegment(key);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${safeAccountId}/storage/kv/namespaces/${safeNamespaceId}/values/${safeKey}`;
 
     const response = await fetch(url, {
       headers: {
@@ -179,7 +212,13 @@ class HttpKVCache implements PlatformCache {
       },
     });
 
-    if (!response.ok) return null;
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`KV HTTP API error: ${response.status}`);
+    }
 
     const text = await response.text();
     try {
@@ -194,9 +233,17 @@ class HttpKVCache implements PlatformCache {
   }
 
   async set(key: string, value: unknown, ttlSeconds?: number): Promise<void> {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/storage/kv/namespaces/${this.namespaceId}/values/${key}${ttlSeconds ? `?expiration_ttl=${ttlSeconds}` : ''}`;
+    const safeAccountId = encodePathSegment(this.accountId);
+    const safeNamespaceId = encodePathSegment(this.namespaceId);
+    const safeKey = encodePathSegment(key);
+    const url = new URL(
+      `https://api.cloudflare.com/client/v4/accounts/${safeAccountId}/storage/kv/namespaces/${safeNamespaceId}/values/${safeKey}`
+    );
+    if (typeof ttlSeconds === 'number' && Number.isFinite(ttlSeconds) && ttlSeconds > 0) {
+      url.searchParams.set('expiration_ttl', String(Math.floor(ttlSeconds)));
+    }
 
-    const response = await fetch(url, {
+    const response = await fetch(url.toString(), {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${this.apiToken}`,
@@ -211,7 +258,10 @@ class HttpKVCache implements PlatformCache {
   }
 
   async delete(key: string): Promise<void> {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/storage/kv/namespaces/${this.namespaceId}/values/${key}`;
+    const safeAccountId = encodePathSegment(this.accountId);
+    const safeNamespaceId = encodePathSegment(this.namespaceId);
+    const safeKey = encodePathSegment(key);
+    const url = `https://api.cloudflare.com/client/v4/accounts/${safeAccountId}/storage/kv/namespaces/${safeNamespaceId}/values/${safeKey}`;
 
     await fetch(url, {
       method: 'DELETE',

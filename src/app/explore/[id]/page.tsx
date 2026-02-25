@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, use, useMemo, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
     BookOpen,
     ChevronLeft,
@@ -28,7 +28,10 @@ import CommitHistoryModal from '@/components/CommitHistoryModal';
 import DiffViewer from '@/components/DiffViewer';
 import StoryModePanel from '@/components/StoryModePanel';
 import { api } from '@/lib/api-client';
-import { fetchAllCommitsForRepository } from '@/lib/commit-pagination';
+import {
+    fetchCommitsPageForRepository,
+    fetchInitialCommitsForRepository,
+} from '@/lib/commit-pagination';
 import Link from 'next/link';
 import type {
     Repository,
@@ -44,6 +47,8 @@ type CenterView = 'code' | 'commit-diff' | 'file-diff' | 'story';
 export default function ExplorePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const ingestJobId = searchParams.get('jobId');
 
     const [repository, setRepository] = useState<Repository | null>(null);
     const [commits, setCommits] = useState<Commit[]>([]);
@@ -78,6 +83,14 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const [compareLoading, setCompareLoading] = useState(false);
     const [compareError, setCompareError] = useState<string | null>(null);
     const [selectedComparePath, setSelectedComparePath] = useState('');
+    const [pendingCommitSha, setPendingCommitSha] = useState<string | null>(null);
+    const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
+    const [waitingForInitialCommits, setWaitingForInitialCommits] = useState(false);
+    const [ingestProgress, setIngestProgress] = useState(0);
+    const [ingestStatus, setIngestStatus] = useState<string | null>(null);
+
+    const commitPrefetchRequestRef = useRef(0);
+    const currentIndexRef = useRef(0);
 
     const currentCommit = commits[currentIndex];
     const currentCommitSha = currentCommit?.sha;
@@ -101,13 +114,66 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return compareFiles.find(file => file.path === selectedComparePath) || compareFiles[0];
     }, [compareFiles, selectedComparePath]);
 
+    const appendUniqueCommits = useCallback((incoming: Commit[]) => {
+        if (incoming.length === 0) return;
+        setCommits(prev => {
+            const seenShas = new Set(prev.map(commit => commit.sha));
+            const additions = incoming.filter(commit => !seenShas.has(commit.sha));
+            if (additions.length === 0) return prev;
+            return [...prev, ...additions];
+        });
+    }, []);
+
+    const prefetchRemainingCommits = useCallback((startPage: number) => {
+        const requestId = commitPrefetchRequestRef.current + 1;
+        commitPrefetchRequestRef.current = requestId;
+
+        if (startPage <= 1) {
+            setLoadingMoreCommits(false);
+            return;
+        }
+
+        setLoadingMoreCommits(true);
+
+        const load = async () => {
+            let page = startPage;
+            let hasNext = true;
+
+            while (hasNext && commitPrefetchRequestRef.current === requestId) {
+                const pageData = await fetchCommitsPageForRepository(id, page);
+                if (commitPrefetchRequestRef.current !== requestId) {
+                    return;
+                }
+
+                appendUniqueCommits(pageData.commits);
+
+                hasNext = Boolean(pageData.pagination?.hasNext);
+                page += 1;
+            }
+        };
+
+        void load()
+            .catch((prefetchError) => {
+                if (commitPrefetchRequestRef.current !== requestId) return;
+                console.warn('Background commit prefetch stopped:', prefetchError);
+            })
+            .finally(() => {
+                if (commitPrefetchRequestRef.current === requestId) {
+                    setLoadingMoreCommits(false);
+                }
+            });
+    }, [appendUniqueCommits, id]);
+
     const fetchRepositoryData = useCallback(async (preserveSha?: string, showLoading = false) => {
+        commitPrefetchRequestRef.current += 1;
+        setLoadingMoreCommits(false);
+
         if (showLoading) {
             setLoading(true);
         }
 
         try {
-            const data = await fetchAllCommitsForRepository(id);
+            const data = await fetchInitialCommitsForRepository(id);
 
             let targetSha = preserveSha;
             if (!targetSha && typeof window !== 'undefined') {
@@ -120,14 +186,30 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
             setRepository(data.repository);
             setCommits(data.commits);
-            setCurrentIndex(prev => {
-                if (data.commits.length === 0) return 0;
-                if (targetSha) {
-                    const idx = data.commits.findIndex(commit => commit.sha === targetSha);
-                    if (idx >= 0) return idx;
+            let nextIndex = data.commits.length === 0
+                ? 0
+                : Math.min(currentIndexRef.current, data.commits.length - 1);
+            let unresolvedTargetSha: string | null = null;
+
+            if (targetSha) {
+                const idx = data.commits.findIndex(commit => commit.sha === targetSha);
+                if (idx >= 0) {
+                    nextIndex = idx;
+                } else {
+                    unresolvedTargetSha = targetSha;
                 }
-                return Math.min(prev, data.commits.length - 1);
-            });
+            }
+
+            setCurrentIndex(nextIndex);
+            setPendingCommitSha(unresolvedTargetSha);
+
+            if (data.pagination?.hasNext) {
+                prefetchRemainingCommits((data.pagination.page || 1) + 1);
+            } else {
+                setLoadingMoreCommits(false);
+                setPendingCommitSha(null);
+            }
+
             setError(null);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -136,11 +218,106 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 setLoading(false);
             }
         }
-    }, [commitSelectionKey, id]);
+    }, [commitSelectionKey, id, prefetchRemainingCommits]);
 
     useEffect(() => {
         fetchRepositoryData(undefined, true);
     }, [fetchRepositoryData]);
+
+    useEffect(() => {
+        if (loading) return;
+
+        if (ingestJobId && commits.length === 0) {
+            setWaitingForInitialCommits(true);
+            return;
+        }
+
+        setWaitingForInitialCommits(false);
+        setIngestStatus(null);
+        setIngestProgress(0);
+    }, [commits.length, ingestJobId, loading]);
+
+    useEffect(() => {
+        if (!waitingForInitialCommits || !ingestJobId) return;
+
+        let cancelled = false;
+        let inFlight = false;
+
+        const poll = async () => {
+            if (cancelled || inFlight) return;
+            inFlight = true;
+
+            try {
+                const jobResponse = await api.get<{
+                    status: string;
+                    progress?: number;
+                    error?: string;
+                    ready?: boolean;
+                    processedCommits?: number;
+                    repoId?: number | null;
+                    repository?: { id: number };
+                }>(`/api/jobs/${ingestJobId}`);
+
+                if (cancelled) return;
+
+                setIngestStatus(jobResponse.status);
+                setIngestProgress(Number(jobResponse.progress || 0));
+
+                const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
+
+                if (jobResponse.status === 'failed') {
+                    setError(jobResponse.error || 'Failed to ingest repository');
+                    setWaitingForInitialCommits(false);
+                    return;
+                }
+
+                if (
+                    (jobResponse.repository || jobResponse.repoId) &&
+                    (jobResponse.ready || hasProcessedCommits || jobResponse.status === 'completed')
+                ) {
+                    await fetchRepositoryData(undefined, false);
+                }
+
+                if (jobResponse.status === 'completed' && !hasProcessedCommits) {
+                    setWaitingForInitialCommits(false);
+                }
+            } catch (pollError) {
+                if (!cancelled) {
+                    console.error('Failed to poll ingest job:', pollError);
+                }
+            } finally {
+                inFlight = false;
+            }
+        };
+
+        void poll();
+        const interval = setInterval(() => {
+            void poll();
+        }, 2000);
+
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+    }, [fetchRepositoryData, ingestJobId, waitingForInitialCommits]);
+
+    useEffect(() => {
+        currentIndexRef.current = currentIndex;
+    }, [currentIndex]);
+
+    useEffect(() => {
+        if (!pendingCommitSha) return;
+        const idx = commits.findIndex(commit => commit.sha === pendingCommitSha);
+        if (idx < 0) return;
+        setCurrentIndex(idx);
+        setPendingCommitSha(null);
+    }, [commits, pendingCommitSha]);
+
+    useEffect(() => {
+        return () => {
+            commitPrefetchRequestRef.current += 1;
+        };
+    }, []);
 
     useEffect(() => {
         if (!currentCommit?.sha || typeof window === 'undefined') return;
@@ -473,6 +650,19 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     }
 
     if (!repository || commits.length === 0) {
+        if (waitingForInitialCommits) {
+            return (
+                <div className={styles.loadingState}>
+                    <Loader2 size={32} className={styles.spinner} />
+                    <p>
+                        {ingestStatus === 'processing'
+                            ? `Indexing commits... ${ingestProgress}%`
+                            : 'Preparing repository...'}
+                    </p>
+                </div>
+            );
+        }
+
         return (
             <div className={styles.errorState}>
                 <p>No commits found for this repository.</p>
@@ -503,6 +693,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         <div className={styles.chapterInfo}>
                             <span className={styles.chapterLabel}>
                                 Chapter {currentIndex + 1} of {commits.length}
+                                {loadingMoreCommits ? ' (loading more...)' : ''}
                             </span>
                             <span className={styles.chapterTitle}>{currentCommit.message.split('\n')[0]}</span>
                         </div>
