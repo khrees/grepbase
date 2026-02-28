@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { getPlatformEnv } from '@/lib/platform/context';
 
 const githubLogger = logger.child({ service: 'github' });
+const inFlightRequests = new Map<string, Promise<unknown>>();
 
 export interface GitHubRepo {
     owner: string;
@@ -60,6 +61,22 @@ export interface GitHubCompareDiff {
     behindBy: number;
     totalCommits: number;
     files: GitHubCommitFileDiff[];
+}
+
+async function withInFlightRequest<T>(key: string, factory: () => Promise<T>): Promise<T> {
+    const existingRequest = inFlightRequests.get(key);
+    if (existingRequest) {
+        return existingRequest as Promise<T>;
+    }
+
+    const request = factory().finally(() => {
+        if (inFlightRequests.get(key) === request) {
+            inFlightRequests.delete(key);
+        }
+    });
+
+    inFlightRequests.set(key, request);
+    return request;
 }
 
 // Helper to get headers. Auth headers are opt-in and should never be enabled for
@@ -141,40 +158,47 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
         return cached;
     }
 
-    githubLogger.info({ owner, repo }, 'Fetching repository from GitHub API');
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<GitHubRepo>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-    const response = await fetch(buildRepoApiBase(owner, repo), {
-        headers: getGitHubHeaders(),
+        githubLogger.info({ owner, repo }, 'Fetching repository from GitHub API');
+
+        const response = await fetch(buildRepoApiBase(owner, repo), {
+            headers: getGitHubHeaders(),
+        });
+
+        if (!response.ok) {
+            githubLogger.error({ owner, repo, status: response.status }, 'Failed to fetch repository');
+            throw new Error(`Failed to fetch repository: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json() as {
+            owner: { login: string };
+            name: string;
+            description: string | null;
+            stargazers_count: number;
+            default_branch: string;
+            html_url: string;
+            size: number;
+        };
+
+        const result = {
+            owner: data.owner.login,
+            name: data.name,
+            description: data.description,
+            stars: data.stargazers_count,
+            defaultBranch: data.default_branch,
+            url: data.html_url,
+            size: data.size,
+        };
+
+        await cache.set(cacheKey, result, CACHE_TTL.HOUR);
+        githubLogger.debug({ owner, repo }, 'Repository cached');
+        return result;
     });
-
-    if (!response.ok) {
-        githubLogger.error({ owner, repo, status: response.status }, 'Failed to fetch repository');
-        throw new Error(`Failed to fetch repository: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json() as {
-        owner: { login: string };
-        name: string;
-        description: string | null;
-        stargazers_count: number;
-        default_branch: string;
-        html_url: string;
-        size: number;
-    };
-
-    const result = {
-        owner: data.owner.login,
-        name: data.name,
-        description: data.description,
-        stars: data.stargazers_count,
-        defaultBranch: data.default_branch,
-        url: data.html_url,
-        size: data.size,
-    };
-
-    await cache.set(cacheKey, result, CACHE_TTL.HOUR);
-    githubLogger.debug({ owner, repo }, 'Repository cached');
-    return result;
 }
 
 /**
@@ -209,27 +233,34 @@ export async function fetchCommitHistory(
     const cached = await cache.get<GitHubCommit[]>(cacheKey);
     if (cached) return cached;
 
-    const allCommits: GitHubCommit[] = [];
-    let page = 1;
-    const cappedMax = Math.max(1, maxCommits);
-    const perPage = GITHUB.MAX_COMMITS_PER_REQUEST;
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<GitHubCommit[]>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-    while (allCommits.length < cappedMax) {
-        const remaining = cappedMax - allCommits.length;
-        const pageSize = Math.min(perPage, remaining);
-        const data = await fetchCommitHistoryPage(owner, repo, page, pageSize);
-        if (data.length === 0) break;
+        const allCommits: GitHubCommit[] = [];
+        let page = 1;
+        const cappedMax = Math.max(1, maxCommits);
+        const perPage = GITHUB.MAX_COMMITS_PER_REQUEST;
 
-        allCommits.push(...data);
+        while (allCommits.length < cappedMax) {
+            const remaining = cappedMax - allCommits.length;
+            const pageSize = Math.min(perPage, remaining);
+            const data = await fetchCommitHistoryPage(owner, repo, page, pageSize);
+            if (data.length === 0) break;
 
-        if (data.length < pageSize) break;
-        page++;
-    }
+            allCommits.push(...data);
 
-    // Reverse to get oldest first (chronological order)
-    const result = allCommits.reverse().slice(0, cappedMax);
-    await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
-    return result;
+            if (data.length < pageSize) break;
+            page++;
+        }
+
+        // Reverse to get oldest first (chronological order)
+        const result = allCommits.reverse().slice(0, cappedMax);
+        await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
+        return result;
+    });
 }
 
 /**
@@ -250,30 +281,37 @@ export async function fetchCommitHistoryPage(
     const cached = await cache.get<GitHubCommit[]>(cacheKey);
     if (cached) return cached;
 
-    const commitsUrl = new URL(`${buildRepoApiBase(owner, repo)}/commits`);
-    commitsUrl.searchParams.set('per_page', String(safePerPage));
-    commitsUrl.searchParams.set('page', String(safePage));
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<GitHubCommit[]>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-    const response = await fetch(commitsUrl.toString(), {
-        headers: getGitHubHeaders(),
+        const commitsUrl = new URL(`${buildRepoApiBase(owner, repo)}/commits`);
+        commitsUrl.searchParams.set('per_page', String(safePerPage));
+        commitsUrl.searchParams.set('page', String(safePage));
+
+        const response = await fetch(commitsUrl.toString(), {
+            headers: getGitHubHeaders(),
+        });
+
+        if (!response.ok) {
+            githubLogger.error({ owner, repo, status: response.status, page: safePage }, 'Failed to fetch commits');
+            throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json() as GitHubCommitApiItem[];
+        const commits = data.map((commit) => ({
+            sha: commit.sha,
+            message: commit.commit.message,
+            authorName: commit.commit.author?.name || null,
+            authorEmail: commit.commit.author?.email || null,
+            date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
+        }));
+
+        await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
+        return commits;
     });
-
-    if (!response.ok) {
-        githubLogger.error({ owner, repo, status: response.status, page: safePage }, 'Failed to fetch commits');
-        throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json() as GitHubCommitApiItem[];
-    const commits = data.map((commit) => ({
-        sha: commit.sha,
-        message: commit.commit.message,
-        authorName: commit.commit.author?.name || null,
-        authorEmail: commit.commit.author?.email || null,
-        date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
-    }));
-
-    await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
-    return commits;
 }
 
 /**
@@ -288,32 +326,39 @@ export async function fetchFilesAtCommit(
     const cached = await cache.get<GitHubFile[]>(cacheKey);
     if (cached) return cached;
 
-    const treeUrl = new URL(`${buildRepoApiBase(owner, repo)}/git/trees/${encodeURIComponent(sha)}`);
-    treeUrl.searchParams.set('recursive', '1');
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<GitHubFile[]>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-    const response = await fetch(treeUrl.toString(), {
-        headers: getGitHubHeaders(),
+        const treeUrl = new URL(`${buildRepoApiBase(owner, repo)}/git/trees/${encodeURIComponent(sha)}`);
+        treeUrl.searchParams.set('recursive', '1');
+
+        const response = await fetch(treeUrl.toString(), {
+            headers: getGitHubHeaders(),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch files: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json() as {
+            tree: Array<{ path: string; type: string; size?: number; sha: string }>;
+        };
+
+        const result = data.tree
+            .filter((item) => item.type === 'blob')
+            .map((item) => ({
+                path: item.path,
+                type: 'file' as const,
+                size: item.size || 0,
+                sha: item.sha,
+            }));
+
+        await cache.set(cacheKey, result, CACHE_TTL.WEEK); // Immutable by SHA
+        return result;
     });
-
-    if (!response.ok) {
-        throw new Error(`Failed to fetch files: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json() as {
-        tree: Array<{ path: string; type: string; size?: number; sha: string }>;
-    };
-
-    const result = data.tree
-        .filter((item) => item.type === 'blob')
-        .map((item) => ({
-            path: item.path,
-            type: 'file' as const,
-            size: item.size || 0,
-            sha: item.sha,
-        }));
-
-    await cache.set(cacheKey, result, CACHE_TTL.WEEK); // Immutable by SHA
-    return result;
 }
 
 /**
@@ -329,22 +374,29 @@ export async function fetchFileContent(
     const cached = await cache.get<string>(cacheKey);
     if (cached) return cached;
 
-    try {
-        const encodedPath = encodeGitHubPath(path);
-        const contentUrl = new URL(`${buildRepoApiBase(owner, repo)}/contents/${encodedPath}`);
-        contentUrl.searchParams.set('ref', sha);
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<string>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-        const response = await fetch(contentUrl.toString(), {
-            headers: getGitHubHeaders('application/vnd.github.v3.raw'),
-        });
+        try {
+            const encodedPath = encodeGitHubPath(path);
+            const contentUrl = new URL(`${buildRepoApiBase(owner, repo)}/contents/${encodedPath}`);
+            contentUrl.searchParams.set('ref', sha);
 
-        if (!response.ok) return null;
-        const text = await response.text();
-        await cache.set(cacheKey, text, CACHE_TTL.WEEK);
-        return text;
-    } catch {
-        return null;
-    }
+            const response = await fetch(contentUrl.toString(), {
+                headers: getGitHubHeaders('application/vnd.github.v3.raw'),
+            });
+
+            if (!response.ok) return null;
+            const text = await response.text();
+            await cache.set(cacheKey, text, CACHE_TTL.WEEK);
+            return text;
+        } catch {
+            return null;
+        }
+    });
 }
 
 /**
@@ -359,21 +411,28 @@ export async function fetchCommitDiff(
     const cached = await cache.get<string>(cacheKey);
     if (cached) return cached;
 
-    try {
-        const response = await fetch(
-            `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
-            {
-                headers: getGitHubHeaders('application/vnd.github.v3.diff'),
-            }
-        );
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<string>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-        if (!response.ok) return null;
-        const text = await response.text();
-        await cache.set(cacheKey, text, CACHE_TTL.WEEK);
-        return text;
-    } catch {
-        return null;
-    }
+        try {
+            const response = await fetch(
+                `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
+                {
+                    headers: getGitHubHeaders('application/vnd.github.v3.diff'),
+                }
+            );
+
+            if (!response.ok) return null;
+            const text = await response.text();
+            await cache.set(cacheKey, text, CACHE_TTL.WEEK);
+            return text;
+        } catch {
+            return null;
+        }
+    });
 }
 
 /**
@@ -388,40 +447,47 @@ export async function fetchCommitFileDiffs(
     const cached = await cache.get<GitHubCommitFileDiff[]>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetch(
-        `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
-        { headers: getGitHubHeaders() }
-    );
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<GitHubCommitFileDiff[]>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-    if (!response.ok) {
-        githubLogger.error({ owner, repo, sha, status: response.status }, 'Failed to fetch commit file diffs');
-        throw new Error(`Failed to fetch commit file diffs: ${response.status} ${response.statusText}`);
-    }
+        const response = await fetch(
+            `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
+            { headers: getGitHubHeaders() }
+        );
 
-    const data = await response.json() as {
-        files?: Array<{
-            filename: string;
-            previous_filename?: string;
-            status: string;
-            additions: number;
-            deletions: number;
-            changes: number;
-            patch?: string;
-        }>;
-    };
+        if (!response.ok) {
+            githubLogger.error({ owner, repo, sha, status: response.status }, 'Failed to fetch commit file diffs');
+            throw new Error(`Failed to fetch commit file diffs: ${response.status} ${response.statusText}`);
+        }
 
-    const files = (data.files || []).map(file => ({
-        path: file.filename,
-        previousPath: file.previous_filename || null,
-        status: file.status,
-        additions: file.additions || 0,
-        deletions: file.deletions || 0,
-        changes: file.changes || 0,
-        patch: file.patch || null,
-    }));
+        const data = await response.json() as {
+            files?: Array<{
+                filename: string;
+                previous_filename?: string;
+                status: string;
+                additions: number;
+                deletions: number;
+                changes: number;
+                patch?: string;
+            }>;
+        };
 
-    await cache.set(cacheKey, files, CACHE_TTL.WEEK);
-    return files;
+        const files = (data.files || []).map(file => ({
+            path: file.filename,
+            previousPath: file.previous_filename || null,
+            status: file.status,
+            additions: file.additions || 0,
+            deletions: file.deletions || 0,
+            changes: file.changes || 0,
+            patch: file.patch || null,
+        }));
+
+        await cache.set(cacheKey, files, CACHE_TTL.WEEK);
+        return files;
+    });
 }
 
 /**
@@ -437,53 +503,60 @@ export async function fetchCompareDiff(
     const cached = await cache.get<GitHubCompareDiff>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetch(
-        `${buildRepoApiBase(owner, repo)}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
-        { headers: getGitHubHeaders() }
-    );
+    return withInFlightRequest(cacheKey, async () => {
+        const hydrated = await cache.get<GitHubCompareDiff>(cacheKey);
+        if (hydrated) {
+            return hydrated;
+        }
 
-    if (!response.ok) {
-        githubLogger.error(
-            { owner, repo, baseSha, headSha, status: response.status },
-            'Failed to fetch compare diff'
+        const response = await fetch(
+            `${buildRepoApiBase(owner, repo)}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
+            { headers: getGitHubHeaders() }
         );
-        throw new Error(`Failed to fetch compare diff: ${response.status} ${response.statusText}`);
-    }
 
-    const data = await response.json() as {
-        status?: string;
-        ahead_by?: number;
-        behind_by?: number;
-        total_commits?: number;
-        files?: Array<{
-            filename: string;
-            previous_filename?: string;
-            status: string;
-            additions: number;
-            deletions: number;
-            changes: number;
-            patch?: string;
-        }>;
-    };
+        if (!response.ok) {
+            githubLogger.error(
+                { owner, repo, baseSha, headSha, status: response.status },
+                'Failed to fetch compare diff'
+            );
+            throw new Error(`Failed to fetch compare diff: ${response.status} ${response.statusText}`);
+        }
 
-    const result: GitHubCompareDiff = {
-        status: data.status || 'unknown',
-        aheadBy: data.ahead_by || 0,
-        behindBy: data.behind_by || 0,
-        totalCommits: data.total_commits || 0,
-        files: (data.files || []).map(file => ({
-            path: file.filename,
-            previousPath: file.previous_filename || null,
-            status: file.status,
-            additions: file.additions || 0,
-            deletions: file.deletions || 0,
-            changes: file.changes || 0,
-            patch: file.patch || null,
-        })),
-    };
+        const data = await response.json() as {
+            status?: string;
+            ahead_by?: number;
+            behind_by?: number;
+            total_commits?: number;
+            files?: Array<{
+                filename: string;
+                previous_filename?: string;
+                status: string;
+                additions: number;
+                deletions: number;
+                changes: number;
+                patch?: string;
+            }>;
+        };
 
-    await cache.set(cacheKey, result, CACHE_TTL.WEEK);
-    return result;
+        const result: GitHubCompareDiff = {
+            status: data.status || 'unknown',
+            aheadBy: data.ahead_by || 0,
+            behindBy: data.behind_by || 0,
+            totalCommits: data.total_commits || 0,
+            files: (data.files || []).map(file => ({
+                path: file.filename,
+                previousPath: file.previous_filename || null,
+                status: file.status,
+                additions: file.additions || 0,
+                deletions: file.deletions || 0,
+                changes: file.changes || 0,
+                patch: file.patch || null,
+            })),
+        };
+
+        await cache.set(cacheKey, result, CACHE_TTL.WEEK);
+        return result;
+    });
 }
 
 /**

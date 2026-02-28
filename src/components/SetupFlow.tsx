@@ -7,6 +7,8 @@ import styles from './SetupFlow.module.css';
 import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
 import { secureStorage } from '@/lib/.client/secure-storage';
 import { api } from '@/lib/api-client';
+import type { RepoSummary } from '@/lib/query/fetchers';
+import { useJobStatus, useStartIngest } from '@/lib/query/hooks';
 
 interface SetupFlowProps {
     repoUrl: string;
@@ -29,8 +31,6 @@ interface StoredSettings extends Record<AIProviderType, PersistedProviderSetting
 }
 
 type SetupStep = 'config' | 'loading' | 'summary';
-
-import type { RepoData } from '@/types';
 
 const STORAGE_KEY = 'ai_settings';
 const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
@@ -101,12 +101,14 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     });
 
     // Background fetch state
-    const [repoData, setRepoData] = useState<RepoData | null>(null);
+    const [repoData, setRepoData] = useState<RepoSummary | null>(null);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [fetchingRepo, setFetchingRepo] = useState(true);
     const [jobId, setJobId] = useState<string | null>(null);
-    const [jobProgress, setJobProgress] = useState(0);
     const fetchStarted = useRef(false);
+    const startIngest = useStartIngest();
+    const jobStatus = useJobStatus(jobId, { enabled: Boolean(jobId) });
+    const jobProgress = Number(jobStatus.data?.progress || 0);
 
     // AI Summary state
     const [summary, setSummary] = useState('');
@@ -173,94 +175,63 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
         async function fetchRepo() {
             try {
-                const data = await api.post<{
-                    repository?: RepoData;
-                    jobId?: string;
-                    status?: string;
-                    cached?: boolean;
-                }>('/api/repos', { url: repoUrl });
+                const data = await startIngest.mutateAsync(repoUrl);
 
-                // If cached, we have the data immediately
-                if (data.cached && data.repository) {
+                if (data.repository && !data.jobId) {
                     setRepoData(data.repository);
                     setFetchingRepo(false);
                     return;
                 }
 
-                // If queued, start polling for status
                 if (data.jobId) {
                     setJobId(data.jobId);
-                    // Polling will be handled by separate effect
                     return;
                 }
 
-                // Fallback: direct response (shouldn't happen with new queue system)
-                if (data.repository) {
-                    setRepoData(data.repository);
-                    setFetchingRepo(false);
-                }
+                setFetchError(data.error || 'Failed to fetch repository');
+                setFetchingRepo(false);
             } catch (err) {
                 setFetchError(err instanceof Error ? err.message : 'Failed to fetch repository');
                 setFetchingRepo(false);
             }
         }
 
-        fetchRepo();
-    }, [repoUrl]);
+        void fetchRepo();
+    }, [repoUrl, startIngest]);
 
-    // Poll for job status
     useEffect(() => {
         if (!jobId) return;
 
-        const pollInterval = setInterval(async () => {
-            try {
-                const response = await api.get<{
-                    job?: {
-                        status: string;
-                        progress: number;
-                        error?: string;
-                        ready?: boolean;
-                        processedCommits?: number;
-                        repoId?: number | null;
-                        repository?: RepoData;
-                    };
-                    status?: string;
-                    progress?: number;
-                    error?: string;
-                    ready?: boolean;
-                    processedCommits?: number;
-                    repoId?: number | null;
-                    repository?: RepoData;
-                }>(`/api/jobs/${jobId}`);
-                const data = response.job ?? response;
-
-                setJobProgress(Number(data.progress || 0));
-                const hasProcessedCommits = Number(data.processedCommits || 0) > 0;
-                const shouldResolveRepository = data.status === 'completed' || data.ready || hasProcessedCommits;
-
-                let resolvedRepo = data.repository ?? null;
-                if (!resolvedRepo && shouldResolveRepository && data.repoId) {
-                    resolvedRepo = (await api.get<{ repository: RepoData }>(
-                        `/api/repos/${data.repoId}/commits?page=1&limit=1`
-                    )).repository;
-                }
-
-                if (shouldResolveRepository && resolvedRepo) {
-                    setRepoData(resolvedRepo);
-                    setFetchingRepo(false);
-                    clearInterval(pollInterval);
-                } else if (data.status === 'failed') {
-                    setFetchError(data.error || 'Failed to ingest repository');
-                    setFetchingRepo(false);
-                    clearInterval(pollInterval);
-                }
-            } catch (err) {
-                console.error('Failed to poll job status:', err);
+        const data = jobStatus.data;
+        if (!data) {
+            if (jobStatus.error) {
+                setFetchError(
+                    jobStatus.error instanceof Error
+                        ? jobStatus.error.message
+                        : 'Failed to fetch repository status'
+                );
+                setFetchingRepo(false);
+                setJobId(null);
             }
-        }, 2000); // Poll every 2 seconds
+            return;
+        }
 
-        return () => clearInterval(pollInterval);
-    }, [jobId]);
+        const hasProcessedCommits = Number(data.processedCommits || 0) > 0;
+        const shouldResolveRepository = data.status === 'completed' || Boolean(data.ready) || hasProcessedCommits;
+
+        if (shouldResolveRepository && data.repository) {
+            setRepoData(data.repository);
+            setFetchingRepo(false);
+            setJobId(null);
+            return;
+        }
+
+        if (data.status === 'failed') {
+            setFetchError(data.error || 'Failed to ingest repository');
+            setFetchingRepo(false);
+            setJobId(null);
+        }
+    }, [jobId, jobStatus.data, jobStatus.error]);
 
     function updateSetting(provider: AIProviderType, key: keyof ProviderSettings, value: string) {
         setSettings(prev => ({

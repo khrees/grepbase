@@ -47,6 +47,12 @@
     KIMI_API_KEY=
 
     NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+    # Ingestion strategy (git bare mirror + first-parent delta)
+    INGEST_GIT_CACHE_DIR=.cache/git-mirrors
+    INGEST_FIRST_PARENT_MAX_COMMITS=5000
+    INGEST_WORKER_ENABLE_SCHEDULER=true
+    INGEST_WORKER_POLL_MS=5000
     ```
     `AI_CREDENTIALS_ENCRYPTION_KEY` and `AI_CREDENTIALS_SIGNING_KEY` must be stable across deploys/restarts, otherwise encrypted session credentials become unreadable.
 
@@ -55,7 +61,13 @@
     bun run dev
     ```
 
-5.  **Open Grepbase**:
+5.  **Run Ingestion Worker (recommended in a second terminal)**:
+    ```bash
+    bun run worker:ingest
+    ```
+    This keeps API requests fast by processing queued ingestion jobs outside request handlers.
+
+6.  **Open Grepbase**:
     Navigate to [http://localhost:3000](http://localhost:3000) and enter a GitHub repository URL to start exploring.
 
 ## 🛠️ Tech Stack

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import ToastHost from '@/components/ToastHost';
+import { QueryProvider } from '@/lib/query/provider';
 
 export const metadata: Metadata = {
   title: 'Grepbase - Understand Code Through Time',
@@ -16,8 +17,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {children}
-        <ToastHost />
+        <QueryProvider>
+          {children}
+          <ToastHost />
+        </QueryProvider>
       </body>
     </html>
   );

@@ -3,8 +3,7 @@ import { ingestJobs, repositories, commits } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { analytics } from '@/lib/analytics';
-import { processRepoIngestion } from '@/services/ingest';
-import { waitUntil } from '@vercel/functions';
+import { triggerIngestWorker } from '@/services/ingest-worker';
 
 const MAX_RETRIES = 3;
 
@@ -90,17 +89,8 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
       })
       .where(eq(ingestJobs.jobId, jobId));
 
-    // 4. Trigger processing in background using Next.js waitUntil
-    waitUntil(
-      processRepoIngestion({
-        jobId,
-        url: currentJob.url,
-        clientId,
-        db: database,
-      }).catch((err) => {
-        logger.error({ err }, 'Background ingestion retry failed');
-      })
-    );
+    // 4. Trigger the worker to claim and process pending jobs.
+    triggerIngestWorker({ maxJobs: 1, clientId });
 
     // Track analytics
     await analytics.trackRequest({

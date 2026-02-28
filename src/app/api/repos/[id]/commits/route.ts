@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { repositories, commits } from '@/db';
-import { eq, asc, sql } from 'drizzle-orm';
+import { and, eq, asc, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { PAGINATION, RATE_LIMITS } from '@/lib/constants';
 import { getDb } from '@/db';
@@ -73,13 +73,19 @@ export async function GET(
         // Get total count
         const totalResult = await db.select({ count: sql<number>`count(*)` })
             .from(commits)
-            .where(eq(commits.repoId, repoId));
+            .where(and(
+                eq(commits.repoId, repoId),
+                eq(commits.inDefaultLineage, true)
+            ));
         const total = Number(totalResult[0]?.count || 0);
 
         // Fetch commits with pagination ordered by their position (oldest first)
         const repoCommits = await db.select()
             .from(commits)
-            .where(eq(commits.repoId, repoId))
+            .where(and(
+                eq(commits.repoId, repoId),
+                eq(commits.inDefaultLineage, true)
+            ))
             .orderBy(asc(commits.order))
             .limit(limit)
             .offset(offset);

@@ -1,21 +1,21 @@
 'use client';
+/* eslint-disable react-hooks/set-state-in-effect */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Github, ArrowRight, Loader2 } from 'lucide-react';
-import { api } from '@/lib/api-client';
-
-interface Repository {
-    id: number;
-}
+import { useJobStatus, useStartIngest } from '@/lib/query/hooks';
 
 export default function ClientHero({ styles }: { styles: Record<string, string> }) {
     const [url, setUrl] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [jobId, setJobId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [validationError, setValidationError] = useState<string | null>(null);
     const [isValid, setIsValid] = useState(false);
     const router = useRouter();
+    const startIngest = useStartIngest();
+    const jobStatus = useJobStatus(jobId, { enabled: Boolean(jobId) });
+    const loading = startIngest.isPending || (Boolean(jobId) && !jobStatus.isTerminal);
 
     function validateRepoUrl(input: string): { valid: boolean; error: string | null } {
         const trimmed = input.trim();
@@ -77,72 +77,59 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
         if (!isValid) return;
 
         setError(null);
-        setLoading(true);
+        setJobId(null);
 
         try {
-            const data = await api.post<{
-                error?: string;
-                repository?: Repository;
-                jobId?: string;
-                cached?: boolean;
-            }>('/api/repos', { url });
+            const data = await startIngest.mutateAsync(url);
 
-            if (data.cached && data.repository) {
-                // Background job might be running due to explicit revalidation
+            if (data.repository) {
+                // Route immediately to repository page and let explore page handle any background ingest polling.
+                const basePath = `/explore/${data.repository.id}`;
                 if (data.jobId) {
-                    router.push(`/explore/${data.repository.id}?jobId=${data.jobId}`);
+                    router.push(`${basePath}?jobId=${data.jobId}`);
                 } else {
-                    router.push(`/explore/${data.repository.id}`);
+                    router.push(basePath);
                 }
                 return;
             }
 
             if (data.jobId) {
-                let attempts = 0;
-                const maxAttempts = 60;
-
-                const poll = async (): Promise<void> => {
-                    attempts++;
-                    const jobResponse = await api.get<{
-                        status: string;
-                        error?: string;
-                        ready?: boolean;
-                        processedCommits?: number;
-                        repoId?: number | null;
-                        repository?: { id: number };
-                    }>(`/api/jobs/${data.jobId}`);
-
-                    const resolvedRepoId = jobResponse.repository?.id ?? jobResponse.repoId ?? null;
-                    if (resolvedRepoId) {
-                        const basePath = `/explore/${resolvedRepoId}`;
-                        if (jobResponse.status === 'completed') {
-                            router.push(basePath);
-                        } else {
-                            router.push(`${basePath}?jobId=${data.jobId}`);
-                        }
-                        return;
-                    } else if (jobResponse.status === 'failed') {
-                        throw new Error(jobResponse.error || 'Failed to fetch repository');
-                    } else if (attempts < maxAttempts) {
-                        await new Promise((resolve) => setTimeout(resolve, 2000));
-                        return poll();
-                    } else {
-                        throw new Error('Repository fetch timed out');
-                    }
-                };
-
-                await poll();
+                setJobId(data.jobId);
                 return;
             }
-
-            if (data.repository) {
-                router.push(`/explore/${data.repository.id}`);
-            }
+            setError(data.error || 'Failed to fetch repository');
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch repository');
-            setLoading(false);
         }
     }
+
+    useEffect(() => {
+        if (!jobId) return;
+
+        const jobData = jobStatus.data;
+        if (!jobData) {
+            if (jobStatus.error) {
+                setError(jobStatus.error instanceof Error ? jobStatus.error.message : 'Failed to fetch repository');
+            }
+            return;
+        }
+
+        const resolvedRepoId = jobData.repository?.id ?? jobData.repoId ?? null;
+        if (resolvedRepoId) {
+            const basePath = `/explore/${resolvedRepoId}`;
+            if (jobData.status === 'completed') {
+                router.push(basePath);
+            } else {
+                router.push(`${basePath}?jobId=${jobId}`);
+            }
+            return;
+        }
+
+        if (jobData.status === 'failed') {
+            setError(jobData.error || 'Failed to fetch repository');
+            setJobId(null);
+        }
+    }, [jobId, jobStatus.data, jobStatus.error, router]);
 
     return (
         <section className={styles.hero}>

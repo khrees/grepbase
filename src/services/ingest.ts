@@ -1,318 +1,458 @@
 import { and, eq, sql } from 'drizzle-orm';
-import { repositories, commits, files, ingestJobs } from '@/db/schema';
-import {
-    fetchRepository,
-    fetchCommitHistoryPage,
-    fetchFilesAtCommit,
-    getLanguageFromPath,
-} from './github';
+import { repositories, commits, ingestJobs } from '@/db/schema';
 import { logger } from '@/lib/logger';
 import type { Database } from '@/db/index';
-import { GITHUB, INGEST } from '@/lib/constants';
+import { GITHUB } from '@/lib/constants';
 import { safeGrantRepoAccess } from './resource-access';
+import { fetchRepository } from './github';
+import {
+  ensureBareMirror,
+  isAncestor,
+  listDeltaFirstParentShas,
+  listInitialFirstParentShas,
+  readCommitMetadataBatch,
+  resolveBranchRef,
+  resolveDefaultBranch,
+  resolveHeadSha,
+} from './git-mirror';
 
 interface IngestOptions {
-    jobId: string;
-    url: string;
-    clientId: string;
-    db: Database;
+  jobId: string;
+  url: string;
+  clientId: string;
+  db: Database;
+}
+
+const COMMIT_UPSERT_BATCH_SIZE = 100; // D1/SQLite caps at 999 params; 100 rows × 8 cols = 800 params (safe)
+const CAT_FILE_SHA_BATCH_SIZE = 1000;
+const MIN_FETCH_INTERVAL_MINUTES = 5;
+const MAX_FETCH_INTERVAL_MINUTES = 24 * 60;
+const REQUIRED_SCHEMA_COLUMNS = [
+  'last_ingested_sha',
+  'last_seen_head_sha',
+  'last_fetch_at',
+  'fetch_interval_minutes',
+  'last_ingest_error',
+  'in_default_lineage',
+];
+
+function parseOwnerRepo(url: string): { owner: string; repoName: string } {
+  let normalized = url
+    .replace(/^(https?:\/\/)?(www\.)?/i, '')
+    .replace(/\.git\/?$/, '')
+    .replace(/\/+$/, '');
+
+  if (normalized.toLowerCase().startsWith('github.com/')) {
+    normalized = normalized.substring('github.com/'.length);
+  }
+
+  const parts = normalized.split('/').filter(Boolean);
+  const owner = parts[0];
+  const repoName = parts[1];
+
+  if (!owner || !repoName) {
+    throw new Error('Invalid GitHub repository URL');
+  }
+
+  return { owner, repoName };
+}
+
+function parseIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
+
+function clampFetchInterval(minutes: number): number {
+  return Math.max(MIN_FETCH_INTERVAL_MINUTES, Math.min(MAX_FETCH_INTERVAL_MINUTES, minutes));
+}
+
+function addJitter(minutes: number, ratio = 0.3): number {
+  const jitter = minutes * ratio;
+  const randomized = minutes + ((Math.random() * 2 - 1) * jitter);
+  return clampFetchInterval(Math.round(randomized));
+}
+
+function computeNextFetchInterval(currentMinutes: number | null | undefined, commitsAdded: number): number {
+  const base = clampFetchInterval(currentMinutes ?? 60);
+  if (commitsAdded > 0) {
+    return addJitter(Math.max(MIN_FETCH_INTERVAL_MINUTES, Math.floor(base * 0.7)));
+  }
+  return addJitter(Math.min(MAX_FETCH_INTERVAL_MINUTES, Math.ceil(base * 1.4)));
+}
+
+function normalizeIngestErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : 'Unknown error';
+  const lower = raw.toLowerCase();
+  const looksLikeSchemaError =
+    lower.includes('no such column') ||
+    lower.includes('has no column') ||
+    lower.includes('no such table');
+  const referencesRequiredColumn = REQUIRED_SCHEMA_COLUMNS.some((column) => raw.includes(column));
+
+  if (looksLikeSchemaError && referencesRequiredColumn) {
+    return 'Database schema is outdated for git-mirror ingestion. Run `bun run db:push` to apply migration 0003_whole_white_queen, then retry.';
+  }
+
+  return raw;
+}
+
+async function upsertCommitBatch(
+  db: Database,
+  repoId: number,
+  rows: Array<{
+    sha: string;
+    message: string;
+    authorName: string | null;
+    authorEmail: string | null;
+    date: Date;
+    order: number;
+    inDefaultLineage: boolean;
+  }>
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  await db
+    .insert(commits)
+    .values(rows.map(row => ({
+      repoId,
+      sha: row.sha,
+      message: row.message,
+      authorName: row.authorName,
+      authorEmail: row.authorEmail,
+      date: row.date,
+      order: row.order,
+      inDefaultLineage: row.inDefaultLineage,
+    })))
+    .onConflictDoUpdate({
+      target: [commits.repoId, commits.sha],
+      set: {
+        message: sql`excluded.message`,
+        authorName: sql`excluded.author_name`,
+        authorEmail: sql`excluded.author_email`,
+        date: sql`excluded.date`,
+        order: sql`excluded."order"`,
+        inDefaultLineage: sql`excluded.in_default_lineage`,
+      },
+    });
 }
 
 export async function processRepoIngestion({
-    jobId,
-    url,
-    clientId,
-    db,
+  jobId,
+  url,
+  clientId,
+  db,
 }: IngestOptions): Promise<void> {
-    const processLogger = logger.child({ jobId, url, clientId, worker: true });
+  const processLogger = logger.child({ service: 'ingest', strategy: 'git-bare-first-parent', jobId, url, clientId });
+  let repoId: number | null = null;
 
-    try {
-        processLogger.info('Starting background repository ingestion');
+  try {
+    processLogger.info('Starting repository ingestion via bare git mirror strategy');
 
-        // 1. Update job status to processing
-        await db.update(ingestJobs)
-            .set({
-                status: 'processing',
-                progress: 10,
-                updatedAt: new Date(),
-            })
-            .where(eq(ingestJobs.jobId, jobId));
+    await db.update(ingestJobs)
+      .set({
+        status: 'processing',
+        progress: 5,
+        updatedAt: new Date(),
+      })
+      .where(eq(ingestJobs.jobId, jobId));
 
-        // 2. Extract owner/repo
-        let normalized = url
-            .replace(/^(https?:\/\/)?(www\.)?/i, '')
-            .replace(/\.git\/?$/, '')
-            .replace(/\/+$/, '');
+    const { owner, repoName } = parseOwnerRepo(url);
+    const now = new Date();
 
-        if (normalized.toLowerCase().startsWith('github.com/')) {
-            normalized = normalized.substring('github.com/'.length);
-        }
+    const repoResult = await db
+      .insert(repositories)
+      .values({
+        url,
+        owner,
+        name: repoName,
+        description: null,
+        readme: null,
+        stars: 0,
+        defaultBranch: 'main',
+        lastFetched: now,
+        createdAt: now,
+        lastFetchAt: now,
+        fetchIntervalMinutes: 60,
+        lastIngestError: null,
+      })
+      .onConflictDoUpdate({
+        target: [repositories.url],
+        set: {
+          owner,
+          name: repoName,
+          lastFetched: now,
+          lastFetchAt: now,
+          lastIngestError: null,
+        },
+      })
+      .returning();
 
-        const parts = normalized.split('/').filter(Boolean);
-        const owner = parts[0];
-        const repoName = parts[1];
+    if (repoResult.length === 0) {
+      throw new Error('Failed to upsert repository state');
+    }
 
-        // 3. Fetch repo details
-        processLogger.debug({ owner, repoName }, 'Fetching repository details');
-        const repoDetails = await fetchRepository(owner, repoName);
+    const repo = repoResult[0];
+    repoId = repo.id;
 
-        // 4. Save/update repository in DB
-        const now = new Date();
-        await db.update(ingestJobs)
-            .set({ progress: 20, updatedAt: now })
-            .where(eq(ingestJobs.jobId, jobId));
+    await safeGrantRepoAccess(repoId, clientId);
 
-        const repoResult = await db
-            .insert(repositories)
-            .values({
-                url,
-                owner,
-                name: repoName,
-                description: repoDetails.description,
-                readme: null, // Readme fetched separately now
-                stars: repoDetails.stars,
-                defaultBranch: repoDetails.defaultBranch,
-                lastFetched: now,
-                createdAt: now,
-            })
-            .onConflictDoUpdate({
-                target: [repositories.url],
-                set: {
-                    description: repoDetails.description,
-                    readme: null,
-                    stars: repoDetails.stars,
-                    defaultBranch: repoDetails.defaultBranch,
-                    lastFetched: now,
-                },
-            })
-            .returning();
+    await db.update(ingestJobs)
+      .set({
+        repoId,
+        progress: 10,
+        updatedAt: new Date(),
+      })
+      .where(eq(ingestJobs.jobId, jobId));
 
-        if (!repoResult || repoResult.length === 0) {
-            processLogger.error('Failed to get repository ID after insert/update');
-            throw new Error('Database failed to return repository record');
-        }
+    // Fetch GitHub metadata and set up the git mirror in parallel to save time.
+    const [mirrorPathResult, ghMetaResult] = await Promise.allSettled([
+      ensureBareMirror(url),
+      fetchRepository(owner, repoName),
+    ]);
 
-        const repoId = repoResult[0].id;
-        processLogger.info({ repoId }, 'Repository record saved/updated');
+    if (mirrorPathResult.status === 'rejected') {
+      throw mirrorPathResult.reason;
+    }
+    const mirrorPath = mirrorPathResult.value;
 
-        // Bind repository visibility to the originating session owner.
-        await safeGrantRepoAccess(repoId, clientId);
+    // If GitHub metadata resolved, persist real description/stars/defaultBranch immediately.
+    if (ghMetaResult.status === 'fulfilled') {
+      const ghMeta = ghMetaResult.value;
+      await db.update(repositories)
+        .set({
+          description: ghMeta.description,
+          stars: ghMeta.stars,
+          defaultBranch: ghMeta.defaultBranch,
+        })
+        .where(eq(repositories.id, repoId));
+      processLogger.debug({ repoId, stars: ghMeta.stars }, 'Updated repo metadata from GitHub API');
+    } else {
+      processLogger.warn({ error: ghMetaResult.reason }, 'GitHub metadata fetch failed; proceeding with placeholders');
+    }
 
-        // 5. Fetch commits
-        const maxCommits = Math.max(1, GITHUB.MAX_COMMITS_PER_REPO);
-        await db.update(ingestJobs)
-            .set({
-                progress: 30,
-                updatedAt: new Date(),
-                repoId,
-                totalCommits: maxCommits,
-                processedCommits: 0,
-            })
-            .where(eq(ingestJobs.jobId, jobId));
+    const resolvedDefaultBranch = ghMetaResult.status === 'fulfilled'
+      ? ghMetaResult.value.defaultBranch
+      : (repo.defaultBranch ?? 'main');
+    const defaultBranch = await resolveDefaultBranch(mirrorPath, resolvedDefaultBranch);
+    const defaultBranchRef = await resolveBranchRef(mirrorPath, defaultBranch);
+    const headSha = await resolveHeadSha(mirrorPath, defaultBranch);
 
-        processLogger.debug({ owner, repoName, maxCommits }, 'Fetching commits in pages');
+    const lastIngestedSha = repo.lastIngestedSha ?? null;
+    const maxFirstParentCommits = Math.max(
+      0,
+      parseIntEnv('INGEST_FIRST_PARENT_MAX_COMMITS', GITHUB.MAX_COMMITS_PER_REPO)
+    );
 
-        // Process commits incrementally so large repositories become usable quickly.
-        const BATCH_SIZE = 50;
-        const PER_PAGE = GITHUB.MAX_COMMITS_PER_REQUEST;
-        let processedCommits = 0;
-        let expectedCommits = maxCommits;
-        let page = 1;
-        const latestCommitShas: string[] = [];
+    let divergence = false;
+    if (lastIngestedSha) {
+      try {
+        divergence = !(await isAncestor(mirrorPath, lastIngestedSha, defaultBranchRef));
+      } catch (ancestorError) {
+        processLogger.warn({ ancestorError, lastIngestedSha, headSha }, 'Ancestor check failed; treating as divergence');
+        divergence = true;
+      }
+    }
 
-        while (processedCommits < maxCommits) {
-            const remaining = maxCommits - processedCommits;
-            const pageSize = Math.min(PER_PAGE, remaining);
-            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize);
+    if (lastIngestedSha === headSha && !divergence) {
+      const existingCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(commits)
+        .where(and(eq(commits.repoId, repoId), eq(commits.inDefaultLineage, true)));
+      const totalCommits = Number(existingCount[0]?.count || 0);
+      const nextFetchInterval = computeNextFetchInterval(repo.fetchIntervalMinutes, 0);
+      const completedAt = new Date();
 
-            if (pageCommits.length === 0) {
-                expectedCommits = Math.max(1, processedCommits);
-                break;
-            }
+      await db.update(repositories)
+        .set({
+          defaultBranch,
+          lastSeenHeadSha: headSha,
+          lastIngestedSha: headSha,
+          lastFetchAt: completedAt,
+          lastFetched: completedAt,
+          fetchIntervalMinutes: nextFetchInterval,
+          lastIngestError: null,
+        })
+        .where(eq(repositories.id, repoId));
 
-            if (latestCommitShas.length === 0) {
-                latestCommitShas.push(...pageCommits.slice(0, 5).map((commit) => commit.sha));
-            }
+      await db.update(ingestJobs)
+        .set({
+          status: 'completed',
+          progress: 100,
+          updatedAt: completedAt,
+          repoId,
+          totalCommits,
+          processedCommits: 0,
+        })
+        .where(eq(ingestJobs.jobId, jobId));
 
-            for (let i = 0; i < pageCommits.length; i += BATCH_SIZE) {
-                const batch = pageCommits.slice(i, i + BATCH_SIZE);
+      processLogger.info({ repoId, defaultBranch, headSha }, 'Repository already up to date; no delta commits');
+      return;
+    }
 
-                const dbCommits = batch.map((c, idx) => ({
-                    repoId,
-                    sha: c.sha,
-                    message: c.message,
-                    authorName: c.authorName,
-                    authorEmail: c.authorEmail,
-                    date: new Date(c.date),
-                    // Keep a stable chronological ordering as additional pages are fetched.
-                    order: maxCommits - (processedCommits + i + idx) - 1,
-                }));
+    const shas = (!lastIngestedSha || divergence)
+      ? await listInitialFirstParentShas(mirrorPath, defaultBranch, maxFirstParentCommits)
+      : await listDeltaFirstParentShas(mirrorPath, lastIngestedSha, defaultBranch);
 
-                // Persist each batch in one statement to reduce round-trip overhead.
-                try {
-                    await db
-                        .insert(commits)
-                        .values(dbCommits)
-                        .onConflictDoUpdate({
-                            target: [commits.repoId, commits.sha],
-                            set: {
-                                message: sql`excluded.message`,
-                                authorName: sql`excluded.author_name`,
-                                authorEmail: sql`excluded.author_email`,
-                                date: sql`excluded.date`,
-                                order: sql`excluded."order"`,
-                            },
-                        });
-                } catch (error) {
-                    // Transitional fallback for environments that have not applied the
-                    // composite (repo_id, sha) unique index migration yet.
-                    try {
-                        await db
-                            .insert(commits)
-                            .values(dbCommits)
-                            .onConflictDoNothing();
-                    } catch (fallbackError) {
-                        processLogger.warn(
-                            { error, fallbackError, batchSize: dbCommits.length },
-                            'Could not persist commit batch'
-                        );
-                    }
-                }
-            }
+    if (shas.length === 0) {
+      const completedAt = new Date();
+      const nextFetchInterval = computeNextFetchInterval(repo.fetchIntervalMinutes, 0);
 
-            processedCommits += pageCommits.length;
+      await db.update(repositories)
+        .set({
+          defaultBranch,
+          lastSeenHeadSha: headSha,
+          lastIngestedSha: headSha,
+          lastFetchAt: completedAt,
+          lastFetched: completedAt,
+          fetchIntervalMinutes: nextFetchInterval,
+          lastIngestError: null,
+        })
+        .where(eq(repositories.id, repoId));
 
-            if (pageCommits.length < pageSize) {
-                expectedCommits = Math.max(1, processedCommits);
-            }
+      await db.update(ingestJobs)
+        .set({
+          status: 'completed',
+          progress: 100,
+          updatedAt: completedAt,
+          repoId,
+          totalCommits: 0,
+          processedCommits: 0,
+        })
+        .where(eq(ingestJobs.jobId, jobId));
 
-            const progressBase = Math.max(1, expectedCommits);
-            const progress = 30 + Math.floor((processedCommits / progressBase) * 30);
+      processLogger.info({ repoId, defaultBranch, divergence, headSha }, 'No commits returned for ingest window');
+      return;
+    }
 
-            await db.update(ingestJobs)
-                .set({
-                    progress,
-                    updatedAt: new Date(),
-                    totalCommits: expectedCommits,
-                    processedCommits,
-                })
-                .where(eq(ingestJobs.jobId, jobId));
+    await db.update(ingestJobs)
+      .set({
+        progress: 25,
+        updatedAt: new Date(),
+        totalCommits: shas.length,
+        processedCommits: 0,
+      })
+      .where(eq(ingestJobs.jobId, jobId));
 
-            if (pageCommits.length < pageSize) {
-                break;
-            }
+    if (divergence) {
+      processLogger.warn({ repoId, lastIngestedSha, headSha }, 'Detected rewritten history; recomputing first-parent lineage');
+      await db.update(commits)
+        .set({ inDefaultLineage: false })
+        .where(eq(commits.repoId, repoId));
+    }
 
-            page += 1;
-        }
+    const maxOrderResult = (!lastIngestedSha || divergence)
+      ? [{ maxOrder: -1 }]
+      : await db
+        .select({ maxOrder: sql<number>`max(${commits.order})` })
+        .from(commits)
+        .where(and(eq(commits.repoId, repoId), eq(commits.inDefaultLineage, true)));
+    const startingOrder = Number(maxOrderResult[0]?.maxOrder ?? -1) + 1;
 
-        if (processedCommits === 0) {
-            throw new Error('No commits found in repository');
-        }
+    let processedCommits = 0;
+    for (let shaIndex = 0; shaIndex < shas.length; shaIndex += CAT_FILE_SHA_BATCH_SIZE) {
+      const shaBatch = shas.slice(shaIndex, shaIndex + CAT_FILE_SHA_BATCH_SIZE);
+      const metadataBatch = await readCommitMetadataBatch(mirrorPath, shaBatch);
 
-        // 6. Pre-fetch files for the latest 5 commits
-        // This is optional but improves UX dramatically for the initial timeline view
-        await db.update(ingestJobs)
-            .set({
-                progress: 65,
-                updatedAt: new Date(),
-                totalCommits: expectedCommits,
-                processedCommits,
-            })
-            .where(eq(ingestJobs.jobId, jobId));
+      for (let commitIndex = 0; commitIndex < metadataBatch.length; commitIndex += COMMIT_UPSERT_BATCH_SIZE) {
+        const commitChunk = metadataBatch.slice(commitIndex, commitIndex + COMMIT_UPSERT_BATCH_SIZE);
+        const chunkBaseOffset = shaIndex + commitIndex;
 
-        const isMassiveRepo = repoDetails.size > INGEST.MASSIVE_REPO_SIZE_KB;
-        const latestCommitsToProcess = isMassiveRepo ? 0 : Math.min(INGEST.LATEST_COMMITS_TO_PREFETCH_DEFAULT, latestCommitShas.length);
-        processLogger.debug(`Pre-fetching files for latest ${latestCommitsToProcess} commits`);
-
-        for (let i = 0; i < latestCommitsToProcess; i++) {
-            const sha = latestCommitShas[i];
-
-            try {
-                // Get the commit ID from DB
-                const dbCommit = await db
-                    .select()
-                    .from(commits)
-                    .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
-                    .limit(1);
-
-                if (dbCommit.length > 0) {
-                    const commitId = dbCommit[0].id;
-
-                    // Fetch files from GitHub
-                    const githubFiles = await fetchFilesAtCommit(owner, repoName, sha);
-
-                    // Prepare file records without content
-                    const filesToSave = githubFiles.map((file) => ({
-                        commitId,
-                        path: file.path,
-                        content: null, // Don't pre-fetch all file content yet
-                        size: file.size,
-                        language: getLanguageFromPath(file.path),
-                    }));
-
-                    if (filesToSave.length > 0) {
-                        // Save in batches
-                        const FILE_BATCH_SIZE = INGEST.FILE_BATCH_INSERT_SIZE;
-                        for (let j = 0; j < filesToSave.length; j += FILE_BATCH_SIZE) {
-                            const fileBatch = filesToSave.slice(j, j + FILE_BATCH_SIZE);
-                            await db.insert(files).values(fileBatch);
-                        }
-                    }
-                }
-            } catch (fileErr) {
-                processLogger.warn(
-                    { sha, error: fileErr },
-                    `Failed to pre-fetch files for commit`
-                );
-                // Continue with other commits even if one fails
-            }
-
-            const progress =
-                65 +
-                Math.floor(
-                    ((i + 1) / latestCommitsToProcess) * 25
-                );
-
-            await db.update(ingestJobs)
-                .set({
-                    progress,
-                    updatedAt: new Date(),
-                    totalCommits: expectedCommits,
-                    processedCommits,
-                })
-                .where(eq(ingestJobs.jobId, jobId));
-        }
-
-        // 7. Mark job as complete
-        await db.update(ingestJobs)
-            .set({
-                status: 'completed',
-                progress: 100,
-                updatedAt: new Date(),
-                repoId,
-                totalCommits: expectedCommits,
-                processedCommits,
-            })
-            .where(eq(ingestJobs.jobId, jobId));
-
-        processLogger.info('Repository ingestion completed successfully');
-    } catch (error) {
-        processLogger.error(
-            { error, errorMessage: error instanceof Error ? error.message : 'Unknown error' },
-            'Repository ingestion failed'
+        await upsertCommitBatch(
+          db,
+          repoId,
+          commitChunk.map((commit, offset) => ({
+            sha: commit.sha,
+            message: commit.subject,
+            authorName: commit.authorName,
+            authorEmail: commit.authorEmail,
+            date: commit.authorDate,
+            order: startingOrder + chunkBaseOffset + offset,
+            inDefaultLineage: true,
+          }))
         );
 
-        // Update job status to failed
-        try {
-            await db.update(ingestJobs)
-                .set({
-                    status: 'failed',
-                    error: error instanceof Error ? error.message : 'Unknown error',
-                    updatedAt: new Date(),
-                })
-                .where(eq(ingestJobs.jobId, jobId));
-        } catch (updateError) {
-            processLogger.error({ updateError }, 'Failed to update job status to failed');
-        }
+        // Update progress after every chunk so the explore page can render
+        // as soon as the first batch of commits hits the DB, rather than
+        // waiting for the entire SHA-batch loop to complete.
+        processedCommits += commitChunk.length;
+        const progress = 25 + Math.floor((processedCommits / shas.length) * 65);
+        await db.update(ingestJobs)
+          .set({
+            progress,
+            updatedAt: new Date(),
+            totalCommits: shas.length,
+            processedCommits,
+          })
+          .where(eq(ingestJobs.jobId, jobId));
+      }
     }
+
+    const completedAt = new Date();
+    const nextFetchInterval = computeNextFetchInterval(repo.fetchIntervalMinutes, processedCommits);
+
+    await db.update(repositories)
+      .set({
+        defaultBranch,
+        lastSeenHeadSha: headSha,
+        lastIngestedSha: headSha,
+        lastFetchAt: completedAt,
+        lastFetched: completedAt,
+        fetchIntervalMinutes: nextFetchInterval,
+        lastIngestError: null,
+      })
+      .where(eq(repositories.id, repoId));
+
+    await db.update(ingestJobs)
+      .set({
+        status: 'completed',
+        progress: 100,
+        updatedAt: completedAt,
+        repoId,
+        totalCommits: shas.length,
+        processedCommits,
+      })
+      .where(eq(ingestJobs.jobId, jobId));
+
+    processLogger.info({
+      repoId,
+      defaultBranch,
+      divergence,
+      commitsProcessed: processedCommits,
+      headSha,
+      lastIngestedSha,
+      nextFetchIntervalMinutes: nextFetchInterval,
+    }, 'Repository ingestion completed');
+  } catch (error) {
+    const normalizedErrorMessage = normalizeIngestErrorMessage(error);
+    processLogger.error(
+      { error, errorMessage: normalizedErrorMessage },
+      'Repository ingestion failed'
+    );
+
+    try {
+      const errorMessage = normalizedErrorMessage;
+
+      if (repoId !== null) {
+        await db.update(repositories)
+          .set({
+            lastIngestError: errorMessage,
+            lastFetchAt: new Date(),
+          })
+          .where(eq(repositories.id, repoId));
+      }
+
+      await db.update(ingestJobs)
+        .set({
+          status: 'failed',
+          error: errorMessage,
+          updatedAt: new Date(),
+        })
+        .where(eq(ingestJobs.jobId, jobId));
+    } catch (updateError) {
+      processLogger.error({ updateError }, 'Failed to persist ingestion failure state');
+    }
+  }
 }

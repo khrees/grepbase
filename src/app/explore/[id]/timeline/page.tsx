@@ -11,38 +11,15 @@ import SettingsModal from '@/components/SettingsModal';
 import { getAISettings } from '@/components/SettingsModal';
 import CalendarTimeline from '@/components/CalendarTimeline';
 import { api } from '@/lib/api-client';
-import {
-    fetchCommitsPageForRepository,
-    fetchInitialCommitsForRepository,
-} from '@/lib/commit-pagination';
-
-interface Repository {
-    id: number;
-    name: string;
-    owner: string;
-    description: string | null;
-}
-
-interface Commit {
-    id: number;
-    sha: string;
-    message: string;
-    authorName: string | null;
-    date: string;
-    order: number;
-}
+import { useRepoCommitsInfinite } from '@/lib/query/hooks';
+import type { Commit } from '@/types';
 
 export default function TimelinePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
     const router = useRouter();
     const summaryRequestIdRef = useRef(0);
     const summaryAbortControllerRef = useRef<AbortController | null>(null);
-
-    const [repository, setRepository] = useState<Repository | null>(null);
-    const [commits, setCommits] = useState<Commit[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const commitsQuery = useRepoCommitsInfinite(id);
     const [showSettings, setShowSettings] = useState(false);
 
     // Day summary state
@@ -52,86 +29,34 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     const [summaryLoading, setSummaryLoading] = useState(false);
     const [daySummary, setDaySummary] = useState('');
 
-    const commitPrefetchRequestRef = useRef(0);
+    const commits = useMemo(() => {
+        const pages = commitsQuery.data?.pages || [];
+        const seenShas = new Set<string>();
+        const allCommits: Commit[] = [];
 
-    const appendUniqueCommits = useCallback((incoming: Commit[]) => {
-        if (incoming.length === 0) return;
-        setCommits(prev => {
-            const seenShas = new Set(prev.map(commit => commit.sha));
-            const additions = incoming.filter(commit => !seenShas.has(commit.sha));
-            if (additions.length === 0) return prev;
-            return [...prev, ...additions];
-        });
-    }, []);
+        for (const page of pages) {
+            for (const commit of page.commits) {
+                if (seenShas.has(commit.sha)) continue;
+                seenShas.add(commit.sha);
+                allCommits.push(commit);
+            }
+        }
 
-    const prefetchRemainingCommits = useCallback((startPage: number) => {
-        const requestId = commitPrefetchRequestRef.current + 1;
-        commitPrefetchRequestRef.current = requestId;
+        return allCommits;
+    }, [commitsQuery.data?.pages]);
 
-        if (startPage <= 1) {
-            setLoadingMoreCommits(false);
+    const repository = commitsQuery.data?.pages[0]?.repository ?? null;
+    const loading = commitsQuery.isPending;
+    const error = commitsQuery.error instanceof Error ? commitsQuery.error.message : null;
+    const loadingMoreCommits = Boolean(commitsQuery.hasNextPage) || commitsQuery.isFetchingNextPage;
+
+    useEffect(() => {
+        if (!commitsQuery.hasNextPage || commitsQuery.isFetchingNextPage) {
             return;
         }
 
-        setLoadingMoreCommits(true);
-
-        const load = async () => {
-            let page = startPage;
-            let hasNext = true;
-
-            while (hasNext && commitPrefetchRequestRef.current === requestId) {
-                const pageData = await fetchCommitsPageForRepository(id, page);
-                if (commitPrefetchRequestRef.current !== requestId) {
-                    return;
-                }
-
-                appendUniqueCommits(pageData.commits);
-                hasNext = Boolean(pageData.pagination?.hasNext);
-                page += 1;
-            }
-        };
-
-        void load()
-            .catch((prefetchError) => {
-                if (commitPrefetchRequestRef.current !== requestId) return;
-                console.warn('Timeline commit prefetch stopped:', prefetchError);
-            })
-            .finally(() => {
-                if (commitPrefetchRequestRef.current === requestId) {
-                    setLoadingMoreCommits(false);
-                }
-            });
-    }, [appendUniqueCommits, id]);
-
-    // Fetch repository and commits on mount
-    useEffect(() => {
-        async function fetchData() {
-            commitPrefetchRequestRef.current += 1;
-            setLoadingMoreCommits(false);
-
-            try {
-                const data = await fetchInitialCommitsForRepository(id);
-
-                setRepository(data.repository);
-                setCommits(data.commits);
-
-                if (data.pagination?.hasNext) {
-                    prefetchRemainingCommits((data.pagination.page || 1) + 1);
-                }
-
-                setLoading(false);
-            } catch (err) {
-                setError(err instanceof Error ? err.message : 'Something went wrong');
-                setLoading(false);
-            }
-        }
-
-        void fetchData();
-
-        return () => {
-            commitPrefetchRequestRef.current += 1;
-        };
-    }, [id, prefetchRemainingCommits]);
+        void commitsQuery.fetchNextPage();
+    }, [commitsQuery.fetchNextPage, commitsQuery.hasNextPage, commitsQuery.isFetchingNextPage]);
 
     const totalCommits = commits.length;
     const activeDays = useMemo(() => {

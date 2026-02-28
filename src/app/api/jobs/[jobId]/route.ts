@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
-import { ingestJobs } from '@/db';
+import { ingestJobs, repositories } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
 import { applyPrivateNoStoreHeaders, resolveSession } from '@/lib/api-security';
@@ -51,6 +51,18 @@ export async function GET(
             jobData.status === 'completed' ||
             (jobData.status === 'processing' && processedCommits > 0);
 
+        const repository = jobData.repoId
+            ? (await db.select({
+                id: repositories.id,
+                owner: repositories.owner,
+                name: repositories.name,
+                description: repositories.description,
+            })
+                .from(repositories)
+                .where(eq(repositories.id, jobData.repoId))
+                .limit(1))[0] ?? null
+            : null;
+
         return applyPrivateNoStoreHeaders(
             NextResponse.json({
                 jobId: jobData.jobId,
@@ -59,7 +71,7 @@ export async function GET(
                 totalCommits: jobData.totalCommits,
                 processedCommits,
                 repoId: jobData.repoId ?? null,
-                repository: null,
+                repository,
                 ready,
                 error: jobData.error,
                 updatedAt: jobData.updatedAt,

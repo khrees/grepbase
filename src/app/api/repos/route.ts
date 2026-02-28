@@ -6,7 +6,7 @@ import { parseGitHubUrl, sanitizeGitHubUrl } from '@/lib/sanitize';
 import { logger } from '@/lib/logger';
 import { PAGINATION, RATE_LIMITS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
-import { processRepoIngestion } from '@/services/ingest';
+import { triggerIngestWorker } from '@/services/ingest-worker';
 import { getDb } from '@/db';
 import { waitUntil } from '@vercel/functions';
 import {
@@ -210,10 +210,14 @@ export async function POST(request: NextRequest) {
                 );
             }
 
-            const commitCountResult = await db.select({ count: sql<number>`count(*)` })
+            const existingCommit = await db.select({ id: commits.id })
                 .from(commits)
-                .where(eq(commits.repoId, existingRepo.id));
-            const existingCommitCount = Number(commitCountResult[0]?.count || 0);
+                .where(and(
+                    eq(commits.repoId, existingRepo.id),
+                    eq(commits.inDefaultLineage, true)
+                ))
+                .limit(1);
+            const hasExistingCommits = existingCommit.length > 0;
 
             const jobId = crypto.randomUUID();
             const now = new Date();
@@ -227,28 +231,13 @@ export async function POST(request: NextRequest) {
                 repoId: existingRepo.id,
             });
             await safeGrantJobAccess(jobId, session.sessionId);
-
-            const ingestionPromise = processRepoIngestion({
-                jobId,
-                url: sanitizedUrl,
-                clientId: session.sessionId,
-                db,
-            }).catch((err) => {
-                logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
-            });
-
-            if (typeof waitUntil === 'function') {
-                waitUntil(ingestionPromise);
-            } else {
-                requestLogger.debug('waitUntil not available, running ingestion promise directly');
-                void ingestionPromise;
-            }
+            triggerIngestWorker({ maxJobs: 1, clientId: session.sessionId });
 
             const duration = Date.now() - startTime;
             const trackRepoIngestPromise = analytics.trackRepoIngest({
                 owner,
                 repo: repoName,
-                commitsCount: existingCommitCount,
+                commitsCount: hasExistingCommits ? 1 : 0,
                 cached: true,
                 duration,
             });
@@ -258,7 +247,7 @@ export async function POST(request: NextRequest) {
                 void trackRepoIngestPromise;
             }
 
-            if (existingCommitCount > 0) {
+            if (hasExistingCommits) {
                 requestLogger.info({ owner, repo: repoName, duration }, 'Repository already cached, refreshing in background');
                 return finalizeSessionResponse(
                     session,
@@ -299,12 +288,56 @@ export async function POST(request: NextRequest) {
             const activeJob = activeUrlJobResult[0];
             await safeGrantJobAccess(activeJob.jobId, session.sessionId);
 
-            const linkedRepo = activeJob.repoId
+            let linkedRepo = activeJob.repoId
                 ? await db.select()
                     .from(repositories)
                     .where(eq(repositories.id, activeJob.repoId))
                     .limit(1)
                 : [];
+
+            if (linkedRepo.length === 0) {
+                const now = new Date();
+                const upsertedRepo = await db
+                    .insert(repositories)
+                    .values({
+                        url: sanitizedUrl,
+                        owner,
+                        name: repoName,
+                        description: null,
+                        readme: null,
+                        stars: 0,
+                        defaultBranch: 'main',
+                        lastFetched: now,
+                        createdAt: now,
+                        lastFetchAt: now,
+                        fetchIntervalMinutes: 60,
+                        lastIngestError: null,
+                    })
+                    .onConflictDoUpdate({
+                        target: [repositories.url],
+                        set: {
+                            owner,
+                            name: repoName,
+                            lastFetched: now,
+                            lastFetchAt: now,
+                            lastIngestError: null,
+                        },
+                    })
+                    .returning();
+
+                if (upsertedRepo.length > 0) {
+                    linkedRepo = [upsertedRepo[0]];
+
+                    if (!activeJob.repoId) {
+                        await db.update(ingestJobs)
+                            .set({
+                                repoId: upsertedRepo[0].id,
+                                updatedAt: now,
+                            })
+                            .where(eq(ingestJobs.jobId, activeJob.jobId));
+                    }
+                }
+            }
 
             if (linkedRepo.length > 0) {
                 await safeGrantRepoAccess(linkedRepo[0].id, session.sessionId);
@@ -324,8 +357,43 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const jobId = crypto.randomUUID();
         const now = new Date();
+        const upsertedRepo = await db
+            .insert(repositories)
+            .values({
+                url: sanitizedUrl,
+                owner,
+                name: repoName,
+                description: null,
+                readme: null,
+                stars: 0,
+                defaultBranch: 'main',
+                lastFetched: now,
+                createdAt: now,
+                lastFetchAt: now,
+                fetchIntervalMinutes: 60,
+                lastIngestError: null,
+            })
+            .onConflictDoUpdate({
+                target: [repositories.url],
+                set: {
+                    owner,
+                    name: repoName,
+                    lastFetched: now,
+                    lastFetchAt: now,
+                    lastIngestError: null,
+                },
+            })
+            .returning();
+
+        if (upsertedRepo.length === 0) {
+            throw new Error('Failed to upsert repository state');
+        }
+
+        const repository = upsertedRepo[0];
+        await safeGrantRepoAccess(repository.id, session.sessionId);
+
+        const jobId = crypto.randomUUID();
         await db.insert(ingestJobs).values({
             jobId,
             url: sanitizedUrl,
@@ -333,26 +401,12 @@ export async function POST(request: NextRequest) {
             progress: 0,
             createdAt: now,
             updatedAt: now,
+            repoId: repository.id,
         });
         await safeGrantJobAccess(jobId, session.sessionId);
+        triggerIngestWorker({ maxJobs: 1, clientId: session.sessionId });
 
-        const ingestionPromise = processRepoIngestion({
-            jobId,
-            url: sanitizedUrl,
-            clientId: session.sessionId,
-            db,
-        }).catch((err) => {
-            logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
-        });
-
-        if (typeof waitUntil === 'function') {
-            waitUntil(ingestionPromise);
-        } else {
-            requestLogger.debug('waitUntil not available, running ingestion promise directly');
-            void ingestionPromise;
-        }
-
-        requestLogger.info({ jobId, owner, repo: repoName }, 'Repository ingest started in background');
+        requestLogger.info({ jobId, owner, repo: repoName, repoId: repository.id }, 'Repository ingest started in background');
 
         return finalizeSessionResponse(
             session,
@@ -361,6 +415,7 @@ export async function POST(request: NextRequest) {
                     jobId,
                     status: 'processing',
                     message: 'Repository ingestion started in background',
+                    repository,
                 },
                 { status: 202 }
             )

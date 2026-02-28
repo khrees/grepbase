@@ -11,6 +11,11 @@ export const repositories = sqliteTable('repositories', {
     defaultBranch: text('default_branch').default('main'),
     readme: text('readme'),
     lastFetched: integer('last_fetched', { mode: 'timestamp' }).notNull(),
+    lastIngestedSha: text('last_ingested_sha'),
+    lastSeenHeadSha: text('last_seen_head_sha'),
+    lastFetchAt: integer('last_fetch_at', { mode: 'timestamp' }),
+    fetchIntervalMinutes: integer('fetch_interval_minutes').default(60),
+    lastIngestError: text('last_ingest_error'),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [
     index('idx_repos_owner_name').on(table.owner, table.name),
@@ -26,10 +31,12 @@ export const commits = sqliteTable('commits', {
     authorEmail: text('author_email'),
     date: integer('date', { mode: 'timestamp' }).notNull(),
     order: integer('order').notNull(), // 1 = first commit, ascending
+    inDefaultLineage: integer('in_default_lineage', { mode: 'boolean' }).notNull().default(true),
 }, (table) => [
     uniqueIndex('commits_repo_sha_unique').on(table.repoId, table.sha),
     index('idx_commits_repo_id').on(table.repoId),
     index('idx_commits_sha').on(table.sha),
+    index('idx_commits_repo_lineage_order').on(table.repoId, table.inDefaultLineage, table.order),
 ]);
 
 // Files table - stores file snapshots at each commit
