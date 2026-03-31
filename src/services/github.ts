@@ -10,6 +10,24 @@ import { getPlatformEnv } from '@/lib/platform/context';
 
 const githubLogger = logger.child({ service: 'github' });
 
+/**
+ * In-flight request deduplication.
+ * If two callers request the same cache-key simultaneously before the first
+ * response arrives, the second caller receives the same Promise instead of
+ * issuing a duplicate upstream fetch.
+ */
+const inFlightRequests = new Map<string, Promise<unknown>>();
+
+async function withDedup<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = inFlightRequests.get(key);
+    if (existing) return existing as Promise<T>;
+
+    const promise = fn().finally(() => inFlightRequests.delete(key));
+    inFlightRequests.set(key, promise);
+    return promise;
+}
+
+
 export interface GitHubRepo {
     owner: string;
     name: string;
@@ -250,30 +268,32 @@ export async function fetchCommitHistoryPage(
     const cached = await cache.get<GitHubCommit[]>(cacheKey);
     if (cached) return cached;
 
-    const commitsUrl = new URL(`${buildRepoApiBase(owner, repo)}/commits`);
-    commitsUrl.searchParams.set('per_page', String(safePerPage));
-    commitsUrl.searchParams.set('page', String(safePage));
+    return withDedup(cacheKey, async () => {
+        const commitsUrl = new URL(`${buildRepoApiBase(owner, repo)}/commits`);
+        commitsUrl.searchParams.set('per_page', String(safePerPage));
+        commitsUrl.searchParams.set('page', String(safePage));
 
-    const response = await fetch(commitsUrl.toString(), {
-        headers: getGitHubHeaders(),
+        const response = await fetch(commitsUrl.toString(), {
+            headers: getGitHubHeaders(),
+        });
+
+        if (!response.ok) {
+            githubLogger.error({ owner, repo, status: response.status, page: safePage }, 'Failed to fetch commits');
+            throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json() as GitHubCommitApiItem[];
+        const commits = data.map((commit) => ({
+            sha: commit.sha,
+            message: commit.commit.message,
+            authorName: commit.commit.author?.name || null,
+            authorEmail: commit.commit.author?.email || null,
+            date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
+        }));
+
+        await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
+        return commits;
     });
-
-    if (!response.ok) {
-        githubLogger.error({ owner, repo, status: response.status, page: safePage }, 'Failed to fetch commits');
-        throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json() as GitHubCommitApiItem[];
-    const commits = data.map((commit) => ({
-        sha: commit.sha,
-        message: commit.commit.message,
-        authorName: commit.commit.author?.name || null,
-        authorEmail: commit.commit.author?.email || null,
-        date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
-    }));
-
-    await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
-    return commits;
 }
 
 /**

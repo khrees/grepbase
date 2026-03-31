@@ -110,33 +110,54 @@ export async function processRepoIngestion({
             })
             .where(eq(ingestJobs.jobId, jobId));
 
-        processLogger.debug({ owner, repoName, maxCommits }, 'Fetching commits in pages');
+        processLogger.debug({ owner, repoName, maxCommits }, 'Fetching commits in pages (parallel)');
 
-        // Process commits incrementally so large repositories become usable quickly.
-        const BATCH_SIZE = 50;
+        const BATCH_SIZE = 50; // DB insert batch size
         const PER_PAGE = GITHUB.MAX_COMMITS_PER_REQUEST;
+        const PARALLEL = GITHUB.PARALLEL_PAGE_FETCHES;
+        const totalPages = Math.ceil(maxCommits / PER_PAGE);
+
         let processedCommits = 0;
         let expectedCommits = maxCommits;
-        let page = 1;
-        const latestCommitShas: string[] = [];
+        let latestCommitShas: string[] = [];
+        let firstBatchDone = false;
 
-        while (processedCommits < maxCommits) {
-            const remaining = maxCommits - processedCommits;
-            const pageSize = Math.min(PER_PAGE, remaining);
-            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize);
-
-            if (pageCommits.length === 0) {
-                expectedCommits = Math.max(1, processedCommits);
-                break;
+        // Fetch pages in groups of PARALLEL to stay within GitHub rate limits
+        for (let pageGroupStart = 1; pageGroupStart <= totalPages; pageGroupStart += PARALLEL) {
+            const pageNums: number[] = [];
+            for (let p = pageGroupStart; p < pageGroupStart + PARALLEL && p <= totalPages; p++) {
+                pageNums.push(p);
             }
 
+            // Fetch all pages in this group concurrently
+            const pageResults = await Promise.all(
+                pageNums.map((page) =>
+                    fetchCommitHistoryPage(owner, repoName, page, PER_PAGE).catch((err) => {
+                        processLogger.warn({ page, error: err }, 'Failed to fetch commit page, skipping');
+                        return [] as Awaited<ReturnType<typeof fetchCommitHistoryPage>>;
+                    })
+                )
+            );
+
+            // Flatten pages in order, stop if GitHub returned fewer than requested (last page)
+            let hitLastPage = false;
+            const allCommits: Awaited<ReturnType<typeof fetchCommitHistoryPage>> = [];
+            for (let i = 0; i < pageResults.length; i++) {
+                const page = pageResults[i];
+                allCommits.push(...page);
+                if (page.length < PER_PAGE) { hitLastPage = true; break; }
+            }
+
+            if (allCommits.length === 0) break;
+
+            // Capture the latest SHA refs from the very first commits ever seen
             if (latestCommitShas.length === 0) {
-                latestCommitShas.push(...pageCommits.slice(0, 5).map((commit) => commit.sha));
+                latestCommitShas = allCommits.slice(0, 5).map((c) => c.sha);
             }
 
-            for (let i = 0; i < pageCommits.length; i += BATCH_SIZE) {
-                const batch = pageCommits.slice(i, i + BATCH_SIZE);
-
+            // Insert in DB batches
+            for (let i = 0; i < allCommits.length; i += BATCH_SIZE) {
+                const batch = allCommits.slice(i, i + BATCH_SIZE);
                 const dbCommits = batch.map((c, idx) => ({
                     repoId,
                     sha: c.sha,
@@ -144,66 +165,57 @@ export async function processRepoIngestion({
                     authorName: c.authorName,
                     authorEmail: c.authorEmail,
                     date: new Date(c.date),
-                    // Keep a stable chronological ordering as additional pages are fetched.
                     order: maxCommits - (processedCommits + i + idx) - 1,
                 }));
 
-                // Persist each batch in one statement to reduce round-trip overhead.
                 try {
-                    await db
-                        .insert(commits)
-                        .values(dbCommits)
-                        .onConflictDoUpdate({
-                            target: [commits.repoId, commits.sha],
-                            set: {
-                                message: sql`excluded.message`,
-                                authorName: sql`excluded.author_name`,
-                                authorEmail: sql`excluded.author_email`,
-                                date: sql`excluded.date`,
-                                order: sql`excluded."order"`,
-                            },
-                        });
-                } catch (error) {
-                    // Transitional fallback for environments that have not applied the
-                    // composite (repo_id, sha) unique index migration yet.
-                    try {
-                        await db
-                            .insert(commits)
-                            .values(dbCommits)
-                            .onConflictDoNothing();
-                    } catch (fallbackError) {
-                        processLogger.warn(
-                            { error, fallbackError, batchSize: dbCommits.length },
-                            'Could not persist commit batch'
-                        );
-                    }
+                    await db.insert(commits).values(dbCommits).onConflictDoUpdate({
+                        target: [commits.repoId, commits.sha],
+                        set: {
+                            message: sql`excluded.message`,
+                            authorName: sql`excluded.author_name`,
+                            authorEmail: sql`excluded.author_email`,
+                            date: sql`excluded.date`,
+                            order: sql`excluded."order"`,
+                        },
+                    });
+                } catch {
+                    // Fallback for environments without the composite unique index migration
+                    await db.insert(commits).values(dbCommits).onConflictDoNothing().catch((e) => {
+                        processLogger.warn({ batchSize: dbCommits.length, error: e }, 'Could not persist commit batch');
+                    });
                 }
             }
 
-            processedCommits += pageCommits.length;
+            processedCommits += allCommits.length;
 
-            if (pageCommits.length < pageSize) {
+            if (hitLastPage) {
                 expectedCommits = Math.max(1, processedCommits);
             }
 
-            const progressBase = Math.max(1, expectedCommits);
-            const progress = 30 + Math.floor((processedCommits / progressBase) * 30);
-
-            await db.update(ingestJobs)
-                .set({
-                    progress,
-                    updatedAt: new Date(),
-                    totalCommits: expectedCommits,
-                    processedCommits,
-                })
-                .where(eq(ingestJobs.jobId, jobId));
-
-            if (pageCommits.length < pageSize) {
-                break;
+            // Mark job usable after first successful batch so users can start navigating
+            if (!firstBatchDone && processedCommits > 0) {
+                firstBatchDone = true;
+                await db.update(ingestJobs)
+                    .set({
+                        progress: 40,
+                        processedCommits,
+                        totalCommits: expectedCommits,
+                        repoId,
+                        updatedAt: new Date(),
+                    })
+                    .where(eq(ingestJobs.jobId, jobId));
+            } else {
+                const progressBase = Math.max(1, expectedCommits);
+                const progress = 30 + Math.floor((processedCommits / progressBase) * 30);
+                await db.update(ingestJobs)
+                    .set({ progress, processedCommits, totalCommits: expectedCommits, updatedAt: new Date() })
+                    .where(eq(ingestJobs.jobId, jobId));
             }
 
-            page += 1;
+            if (hitLastPage || processedCommits >= maxCommits) break;
         }
+
 
         if (processedCommits === 0) {
             throw new Error('No commits found in repository');

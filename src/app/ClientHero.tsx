@@ -1,28 +1,56 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Github, ArrowRight, Loader2 } from 'lucide-react';
-import { api } from '@/lib/api-client';
-
-interface Repository {
-    id: number;
-}
+import { useStartIngest, useJobStatus } from '@/lib/query/hooks';
 
 export default function ClientHero({ styles }: { styles: Record<string, string> }) {
     const [url, setUrl] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [validationError, setValidationError] = useState<string | null>(null);
     const [isValid, setIsValid] = useState(false);
     const router = useRouter();
 
+    const ingestMutation = useStartIngest();
+
+    // Once we have started an ingest job, poll for its status
+    const [pendingJobId, setPendingJobId] = useState<string | null>(null);
+    const jobQuery = useJobStatus(pendingJobId, { enabled: !!pendingJobId });
+
+    // Navigate when job is ready or completed
+    useEffect(() => {
+        const job = jobQuery.data;
+        if (!job) return;
+
+        const repoId = job.repository?.id ?? job.repoId;
+        if (!repoId) return;
+
+        const basePath = `/explore/${repoId}`;
+        if (job.status === 'completed') {
+            router.push(basePath);
+        } else if (job.ready || Number(job.processedCommits ?? 0) > 0) {
+            router.push(`${basePath}?jobId=${pendingJobId}`);
+        }
+        // Note: failed status is handled below as derived state, not inside this effect
+    }, [jobQuery.data, pendingJobId, router]);
+
+    // Derive failure: if the polled job failed, clear the pending ID (derived from data, no setState in effect)
+    const jobFailed = jobQuery.data?.status === 'failed';
+    useEffect(() => {
+        if (!jobFailed) return;
+        // Use a timeout so this isn't synchronous within the render that set jobFailed
+        const t = setTimeout(() => {
+            setPendingJobId(null);
+            ingestMutation.reset();
+        }, 0);
+        return () => clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [jobFailed]);
+
+
     function validateRepoUrl(input: string): { valid: boolean; error: string | null } {
         const trimmed = input.trim();
-
-        if (!trimmed) {
-            return { valid: false, error: null };
-        }
+        if (!trimmed) return { valid: false, error: null };
 
         let normalized = trimmed
             .replace(/^(https?:\/\/)?(www\.)?/i, '')
@@ -44,15 +72,12 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
 
         if (parts.length === 2) {
             const [owner, repo] = parts;
-
             if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(owner)) {
                 return { valid: false, error: 'Invalid repository owner name' };
             }
-
             if (!/^[a-zA-Z0-9._-]+$/.test(repo)) {
                 return { valid: false, error: 'Invalid repository name' };
             }
-
             return { valid: true, error: null };
         }
 
@@ -69,80 +94,41 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
         const result = validateRepoUrl(newUrl);
         setIsValid(result.valid);
         setValidationError(result.error);
-        if (error) setError(null);
+        if (ingestMutation.isError) ingestMutation.reset();
     }
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
         if (!isValid) return;
 
-        setError(null);
-        setLoading(true);
+        const data = await ingestMutation.mutateAsync(url);
 
-        try {
-            const data = await api.post<{
-                error?: string;
-                repository?: Repository;
-                jobId?: string;
-                cached?: boolean;
-            }>('/api/repos', { url });
-
-            if (data.cached && data.repository) {
-                // Background job might be running due to explicit revalidation
-                if (data.jobId) {
-                    router.push(`/explore/${data.repository.id}?jobId=${data.jobId}`);
-                } else {
-                    router.push(`/explore/${data.repository.id}`);
-                }
-                return;
-            }
-
+        if (data.cached && data.repository) {
             if (data.jobId) {
-                let attempts = 0;
-                const maxAttempts = 60;
-
-                const poll = async (): Promise<void> => {
-                    attempts++;
-                    const jobResponse = await api.get<{
-                        status: string;
-                        error?: string;
-                        ready?: boolean;
-                        processedCommits?: number;
-                        repoId?: number | null;
-                        repository?: { id: number };
-                    }>(`/api/jobs/${data.jobId}`);
-
-                    const resolvedRepoId = jobResponse.repository?.id ?? jobResponse.repoId ?? null;
-                    if (resolvedRepoId) {
-                        const basePath = `/explore/${resolvedRepoId}`;
-                        if (jobResponse.status === 'completed') {
-                            router.push(basePath);
-                        } else {
-                            router.push(`${basePath}?jobId=${data.jobId}`);
-                        }
-                        return;
-                    } else if (jobResponse.status === 'failed') {
-                        throw new Error(jobResponse.error || 'Failed to fetch repository');
-                    } else if (attempts < maxAttempts) {
-                        await new Promise((resolve) => setTimeout(resolve, 2000));
-                        return poll();
-                    } else {
-                        throw new Error('Repository fetch timed out');
-                    }
-                };
-
-                await poll();
-                return;
-            }
-
-            if (data.repository) {
+                router.push(`/explore/${data.repository.id}?jobId=${data.jobId}`);
+            } else {
                 router.push(`/explore/${data.repository.id}`);
             }
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch repository');
-            setLoading(false);
+            return;
+        }
+
+        if (data.repository && !data.jobId) {
+            router.push(`/explore/${data.repository.id}`);
+            return;
+        }
+
+        if (data.jobId) {
+            // Start polling via useJobStatus by setting the pending job ID
+            setPendingJobId(data.jobId);
         }
     }
+
+    const loading = ingestMutation.isPending || !!pendingJobId;
+    const error = ingestMutation.isError
+        ? (ingestMutation.error as Error)?.message || 'Failed to fetch repository'
+        : jobQuery.data?.status === 'failed'
+            ? jobQuery.data.error || 'Failed to fetch repository'
+            : null;
 
     return (
         <section className={styles.hero}>

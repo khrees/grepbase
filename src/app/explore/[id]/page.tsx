@@ -27,20 +27,19 @@ import FileTree from '@/components/FileTree';
 import CommitHistoryModal from '@/components/CommitHistoryModal';
 import DiffViewer from '@/components/DiffViewer';
 import StoryModePanel from '@/components/StoryModePanel';
-import { api } from '@/lib/api-client';
+import { useQueryClient } from '@tanstack/react-query';
 import {
-    fetchCommitsPageForRepository,
-    fetchInitialCommitsForRepository,
-} from '@/lib/commit-pagination';
+    useRepoCommitsInfinite,
+    useCommitFiles,
+    useFileContent,
+    useCommitDiff,
+    useCompareDiff,
+    useJobStatus,
+    useResyncRepo,
+} from '@/lib/query/hooks';
+import { queryKeys } from '@/lib/query/keys';
 import Link from 'next/link';
-import type {
-    Repository,
-    Commit,
-    FileData,
-    CommitDiffResponse,
-    CompareDiffResponse,
-    DiffFileData,
-} from '@/types';
+import type { Repository, Commit, FileData } from '@/types';
 
 type CenterView = 'code' | 'commit-diff' | 'file-diff' | 'story';
 
@@ -49,282 +48,71 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const router = useRouter();
     const searchParams = useSearchParams();
     const ingestJobId = searchParams.get('jobId');
+    const queryClient = useQueryClient();
 
-    const [repository, setRepository] = useState<Repository | null>(null);
-    const [commits, setCommits] = useState<Commit[]>([]);
+    // ─── Immutable UI state ────────────────────────────────────────────────────
     const [currentIndex, setCurrentIndex] = useState(0);
-    const [files, setFiles] = useState<FileData[]>([]);
-    const [selectedFile, setSelectedFile] = useState<FileData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [loadingFiles, setLoadingFiles] = useState(false);
-    const [loadingContent, setLoadingContent] = useState(false);
+    // selectedFilePath is the user's explicit choice; null means "auto-select"
+    const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
     const [showAIPanel, setShowAIPanel] = useState(true);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [focusMode, setFocusMode] = useState(false);
-    const [syncing, setSyncing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-
     const [centerView, setCenterView] = useState<CenterView>('code');
     const [diffViewMode, setDiffViewMode] = useState<'unified' | 'split'>('unified');
+    // User-override state for diff selectors (null = auto-derive)
+    const [commitDiffPathOverride, setCommitDiffPathOverride] = useState<string | null>(null);
+    const [comparePathOverride, setComparePathOverride] = useState<string | null>(null);
+    const [compareBaseOverride, setCompareBaseOverride] = useState<string | null>(null);
+    const [compareHeadOverride, setCompareHeadOverride] = useState<string | null>(null);
+    const [resyncJobId, setResyncJobId] = useState<string | null>(null);
 
-    const [commitDiffFiles, setCommitDiffFiles] = useState<DiffFileData[]>([]);
-    const [commitDiffLoading, setCommitDiffLoading] = useState(false);
-    const [commitDiffError, setCommitDiffError] = useState<string | null>(null);
-    const [selectedCommitDiffPath, setSelectedCommitDiffPath] = useState('');
-
-    const [compareBaseSha, setCompareBaseSha] = useState('');
-    const [compareHeadSha, setCompareHeadSha] = useState('');
-    const [compareFiles, setCompareFiles] = useState<DiffFileData[]>([]);
-    const [compareStatus, setCompareStatus] = useState('unknown');
-    const [compareTotalFiles, setCompareTotalFiles] = useState(0);
-    const [compareAheadBy, setCompareAheadBy] = useState(0);
-    const [compareBehindBy, setCompareBehindBy] = useState(0);
-    const [compareLoading, setCompareLoading] = useState(false);
-    const [compareError, setCompareError] = useState<string | null>(null);
-    const [selectedComparePath, setSelectedComparePath] = useState('');
-    const [pendingCommitSha, setPendingCommitSha] = useState<string | null>(null);
-    const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
-    const [waitingForInitialCommits, setWaitingForInitialCommits] = useState(false);
-    const [ingestProgress, setIngestProgress] = useState(0);
-    const [ingestStatus, setIngestStatus] = useState<string | null>(null);
-
-    const commitPrefetchRequestRef = useRef(0);
-    const currentIndexRef = useRef(0);
-
-    const currentCommit = commits[currentIndex];
-    const currentCommitSha = currentCommit?.sha;
-    const repositoryId = repository?.id;
+    const currentIndexRef = useRef(currentIndex);
     const commitSelectionKey = useMemo(() => `grepbase:last_commit:${id}`, [id]);
 
-    const visibleFilePaths = useMemo(
-        () => files
-            .filter(file => file.shouldFetchContent || file.hasContent)
-            .map(file => file.path),
-        [files]
+    // ─── Data queries ─────────────────────────────────────────────────────────
+    const commitsQuery = useRepoCommitsInfinite(id);
+
+    const commits = useMemo(
+        () => commitsQuery.data?.pages.flatMap((p) => p.commits) ?? [],
+        [commitsQuery.data]
     );
+    const repository: Repository | undefined = commitsQuery.data?.pages[0]?.repository;
 
-    const selectedCommitDiffFile = useMemo(() => {
-        if (commitDiffFiles.length === 0) return null;
-        return commitDiffFiles.find(file => file.path === selectedCommitDiffPath) || commitDiffFiles[0];
-    }, [commitDiffFiles, selectedCommitDiffPath]);
-
-    const selectedCompareFile = useMemo(() => {
-        if (compareFiles.length === 0) return null;
-        return compareFiles.find(file => file.path === selectedComparePath) || compareFiles[0];
-    }, [compareFiles, selectedComparePath]);
-
-    const appendUniqueCommits = useCallback((incoming: Commit[]) => {
-        if (incoming.length === 0) return;
-        setCommits(prev => {
-            const seenShas = new Set(prev.map(commit => commit.sha));
-            const additions = incoming.filter(commit => !seenShas.has(commit.sha));
-            if (additions.length === 0) return prev;
-            return [...prev, ...additions];
-        });
-    }, []);
-
-    const prefetchRemainingCommits = useCallback((startPage: number) => {
-        const requestId = commitPrefetchRequestRef.current + 1;
-        commitPrefetchRequestRef.current = requestId;
-
-        if (startPage <= 1) {
-            setLoadingMoreCommits(false);
-            return;
+    // Auto-fetch remaining commit pages in the background
+    useEffect(() => {
+        if (commitsQuery.hasNextPage && !commitsQuery.isFetchingNextPage) {
+            void commitsQuery.fetchNextPage();
         }
+    }, [commitsQuery]);
 
-        setLoadingMoreCommits(true);
-
-        const load = async () => {
-            let page = startPage;
-            let hasNext = true;
-
-            while (hasNext && commitPrefetchRequestRef.current === requestId) {
-                const pageData = await fetchCommitsPageForRepository(id, page);
-                if (commitPrefetchRequestRef.current !== requestId) {
-                    return;
-                }
-
-                appendUniqueCommits(pageData.commits);
-
-                hasNext = Boolean(pageData.pagination?.hasNext);
-                page += 1;
-            }
-        };
-
-        void load()
-            .catch((prefetchError) => {
-                if (commitPrefetchRequestRef.current !== requestId) return;
-                console.warn('Background commit prefetch stopped:', prefetchError);
-            })
-            .finally(() => {
-                if (commitPrefetchRequestRef.current === requestId) {
-                    setLoadingMoreCommits(false);
-                }
-            });
-    }, [appendUniqueCommits, id]);
-
-    const fetchRepositoryData = useCallback(async (preserveSha?: string, showLoading = false) => {
-        commitPrefetchRequestRef.current += 1;
-        setLoadingMoreCommits(false);
-
-        if (showLoading) {
-            setLoading(true);
+    // Restore last selected commit on first load (URL param → sessionStorage → 0)
+    const initialised = useRef(false);
+    useEffect(() => {
+        if (commits.length === 0 || initialised.current) return;
+        initialised.current = true;
+        const urlSha = searchParams.get('sha');
+        const storedSha =
+            (typeof window !== 'undefined' && sessionStorage.getItem(commitSelectionKey)) ||
+            (typeof window !== 'undefined' && localStorage.getItem(commitSelectionKey));
+        const targetSha = urlSha || storedSha || null;
+        if (targetSha) {
+            const idx = commits.findIndex((c) => c.sha === targetSha);
+            if (idx >= 0) setCurrentIndex(idx);
         }
+    }, [commits, commitSelectionKey, searchParams]);
 
-        try {
-            const data = await fetchInitialCommitsForRepository(id);
+    const currentCommit: Commit | undefined = commits[currentIndex];
+    const currentCommitSha = currentCommit?.sha;
 
-            let targetSha = preserveSha;
-            if (!targetSha && typeof window !== 'undefined') {
-                const urlSha = new URLSearchParams(window.location.search).get('sha');
-                const storedSha =
-                    sessionStorage.getItem(commitSelectionKey) ||
-                    localStorage.getItem(commitSelectionKey);
-                targetSha = urlSha || storedSha || undefined;
-            }
+    // Keep ref in sync for callbacks
+    useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
 
-            setRepository(data.repository);
-            setCommits(data.commits);
-            let nextIndex = data.commits.length === 0
-                ? 0
-                : Math.min(currentIndexRef.current, data.commits.length - 1);
-            let unresolvedTargetSha: string | null = null;
-
-            if (targetSha) {
-                const idx = data.commits.findIndex(commit => commit.sha === targetSha);
-                if (idx >= 0) {
-                    nextIndex = idx;
-                } else {
-                    unresolvedTargetSha = targetSha;
-                }
-            }
-
-            setCurrentIndex(nextIndex);
-            setPendingCommitSha(unresolvedTargetSha);
-
-            if (data.pagination?.hasNext) {
-                prefetchRemainingCommits((data.pagination.page || 1) + 1);
-            } else {
-                setLoadingMoreCommits(false);
-                setPendingCommitSha(null);
-            }
-
-            setError(null);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Something went wrong');
-        } finally {
-            if (showLoading) {
-                setLoading(false);
-            }
-        }
-    }, [commitSelectionKey, id, prefetchRemainingCommits]);
-
-    useEffect(() => {
-        fetchRepositoryData(undefined, true);
-    }, [fetchRepositoryData]);
-
-    useEffect(() => {
-        if (loading) return;
-
-        if (ingestJobId && commits.length === 0) {
-            setWaitingForInitialCommits(true);
-            return;
-        }
-
-        setWaitingForInitialCommits(false);
-        setIngestStatus(null);
-        setIngestProgress(0);
-    }, [commits.length, ingestJobId, loading]);
-
-    useEffect(() => {
-        if (!waitingForInitialCommits || !ingestJobId) return;
-
-        let cancelled = false;
-        let inFlight = false;
-
-        const poll = async () => {
-            if (cancelled || inFlight) return;
-            inFlight = true;
-
-            try {
-                const jobResponse = await api.get<{
-                    status: string;
-                    progress?: number;
-                    error?: string;
-                    ready?: boolean;
-                    processedCommits?: number;
-                    repoId?: number | null;
-                    repository?: { id: number };
-                }>(`/api/jobs/${ingestJobId}`);
-
-                if (cancelled) return;
-
-                setIngestStatus(jobResponse.status);
-                setIngestProgress(Number(jobResponse.progress || 0));
-
-                const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
-
-                if (jobResponse.status === 'failed') {
-                    setError(jobResponse.error || 'Failed to ingest repository');
-                    setWaitingForInitialCommits(false);
-                    return;
-                }
-
-                if (
-                    (jobResponse.repository || jobResponse.repoId) &&
-                    (jobResponse.ready || hasProcessedCommits || jobResponse.status === 'completed')
-                ) {
-                    await fetchRepositoryData(undefined, false);
-                }
-
-                if (jobResponse.status === 'completed' && !hasProcessedCommits) {
-                    setWaitingForInitialCommits(false);
-                }
-            } catch (pollError) {
-                if (!cancelled) {
-                    console.error('Failed to poll ingest job:', pollError);
-                }
-            } finally {
-                inFlight = false;
-            }
-        };
-
-        void poll();
-        const interval = setInterval(() => {
-            void poll();
-        }, 2000);
-
-        return () => {
-            cancelled = true;
-            clearInterval(interval);
-        };
-    }, [fetchRepositoryData, ingestJobId, waitingForInitialCommits]);
-
-    useEffect(() => {
-        currentIndexRef.current = currentIndex;
-    }, [currentIndex]);
-
-    useEffect(() => {
-        if (!pendingCommitSha) return;
-        const idx = commits.findIndex(commit => commit.sha === pendingCommitSha);
-        if (idx < 0) return;
-        setCurrentIndex(idx);
-        setPendingCommitSha(null);
-    }, [commits, pendingCommitSha]);
-
-    useEffect(() => {
-        return () => {
-            commitPrefetchRequestRef.current += 1;
-        };
-    }, []);
-
+    // Persist selected commit to URL + storage
     useEffect(() => {
         if (!currentCommit?.sha || typeof window === 'undefined') return;
-
         sessionStorage.setItem(commitSelectionKey, currentCommit.sha);
         localStorage.setItem(commitSelectionKey, currentCommit.sha);
-
         const currentUrl = new URL(window.location.href);
         if (currentUrl.searchParams.get('sha') !== currentCommit.sha) {
             currentUrl.searchParams.set('sha', currentCommit.sha);
@@ -332,70 +120,184 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         }
     }, [commitSelectionKey, currentCommit?.sha]);
 
-    const selectFile = useCallback(async (file: FileData) => {
-        if (file.content) {
-            setSelectedFile(file);
-            return;
+    // ─── Job polling (ingest from home page) ─────────────────────────────────
+    // Fire the job poller any time we have a jobId and no commits yet — even if
+    // the commits query errored (e.g. 403 before access is written to KV).
+    const waitingForInitialCommits =
+        !commitsQuery.isLoading && commits.length === 0 && !!ingestJobId;
+
+    const jobQuery = useJobStatus(ingestJobId, { enabled: waitingForInitialCommits });
+    const jobData = jobQuery.data;
+
+    const prevJobReadyRef = useRef(false);
+    useEffect(() => {
+        if (!jobData) return;
+        const isReady =
+            jobData.status === 'completed' ||
+            jobData.ready ||
+            Number(jobData.processedCommits ?? 0) > 0;
+        if (isReady && !prevJobReadyRef.current) {
+            prevJobReadyRef.current = true;
+            void queryClient.invalidateQueries({ queryKey: queryKeys.repos.commits(id) });
         }
+    }, [jobData, id, queryClient]);
 
-        if (!currentCommitSha) return;
+    // ─── Files for current commit ─────────────────────────────────────────────
+    const filesQuery = useCommitFiles(id, currentCommitSha);
+    const files = useMemo(() => filesQuery.data?.files ?? [], [filesQuery.data]);
 
-        setLoadingContent(true);
-        setSelectedFile({ ...file, content: null });
+    // Track the last sha for which we auto-selected a file so we only reset once per sha change
+    const lastAutoShaRef = useRef<string | undefined>(undefined);
 
-        try {
-            const data = await api.get<{ content?: string }>(
-                `/api/repos/${id}/commits/${currentCommitSha}/content?path=${encodeURIComponent(file.path)}`
-            );
-
-            if (data.content) {
-                const updatedFile = { ...file, content: data.content, hasContent: true };
-                setFiles(prev => prev.map(existing => (existing.path === file.path ? updatedFile : existing)));
-                setSelectedFile(updatedFile);
-            }
-        } catch (err) {
-            console.error('Failed to fetch file content:', err);
-        } finally {
-            setLoadingContent(false);
+    // Effective file path: user's choice, or auto-pick first loadable file when sha changes
+    const effectiveFilePath = useMemo(() => {
+        if (currentCommitSha !== lastAutoShaRef.current) {
+            // SHA changed — auto-pick first file (don't persist old selection)
+            lastAutoShaRef.current = currentCommitSha;
+            const first = files.find((f) => f.shouldFetchContent || f.hasContent);
+            return first?.path ?? null;
         }
-    }, [currentCommitSha, id]);
+        // Same SHA — honour user's explicit selection; fall back to auto-pick if null
+        if (selectedFilePath) return selectedFilePath;
+        const first = files.find((f) => f.shouldFetchContent || f.hasContent);
+        return first?.path ?? null;
+        // We intentionally omit selectedFilePath from deps so the auto-pick logic only fires on SHA change
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentCommitSha, files]);
+
+    // ─── File content ─────────────────────────────────────────────────────────
+    const fileContentQuery = useFileContent(
+        id,
+        currentCommitSha,
+        effectiveFilePath ?? undefined,
+        !!effectiveFilePath
+    );
+
+    // Build selectedFile as pure derived data — no setState in an effect
+    const selectedFile = useMemo<FileData | null>(() => {
+        if (!effectiveFilePath) return null;
+        const meta = files.find((f) => f.path === effectiveFilePath);
+        if (!meta) return null;
+        if (fileContentQuery.data?.content) {
+            return { ...meta, content: fileContentQuery.data.content, hasContent: true };
+        }
+        return { ...meta };
+    }, [effectiveFilePath, files, fileContentQuery.data]);
+
+    // ─── Commit diff ──────────────────────────────────────────────────────────
+    const commitDiffQuery = useCommitDiff(id, currentCommitSha, centerView === 'commit-diff');
+    const commitDiffFiles = useMemo(
+        () => commitDiffQuery.data?.files ?? [],
+        [commitDiffQuery.data]
+    );
+
+    // Derive selected diff path (user override wins if still valid)
+    const selectedCommitDiffPath = useMemo(() => {
+        if (commitDiffPathOverride && commitDiffFiles.some((f) => f.path === commitDiffPathOverride)) {
+            return commitDiffPathOverride;
+        }
+        return commitDiffFiles[0]?.path || '';
+    }, [commitDiffFiles, commitDiffPathOverride]);
+
+    // ─── Compare diff ─────────────────────────────────────────────────────────
+    const compareHeadSha = useMemo(() => {
+        if (compareHeadOverride && commits.some((c) => c.sha === compareHeadOverride)) {
+            return compareHeadOverride;
+        }
+        return commits[currentIndex]?.sha || commits[commits.length - 1]?.sha || '';
+    }, [compareHeadOverride, commits, currentIndex]);
+
+    const compareBaseSha = useMemo(() => {
+        if (compareBaseOverride && commits.some((c) => c.sha === compareBaseOverride)) {
+            return compareBaseOverride;
+        }
+        return commits[Math.max(0, currentIndex - 1)]?.sha || compareHeadSha;
+    }, [compareBaseOverride, commits, currentIndex, compareHeadSha]);
+
+    const compareDiffQuery = useCompareDiff(id, compareBaseSha, compareHeadSha, centerView === 'file-diff');
+    const compareFiles = useMemo(
+        () => compareDiffQuery.data?.files ?? [],
+        [compareDiffQuery.data]
+    );
+
+    const selectedComparePath = useMemo(() => {
+        if (comparePathOverride && compareFiles.some((f) => f.path === comparePathOverride)) {
+            return comparePathOverride;
+        }
+        return compareFiles[0]?.path || '';
+    }, [compareFiles, comparePathOverride]);
+
+    // ─── Resync ───────────────────────────────────────────────────────────────
+    const resyncMutation = useResyncRepo();
+    const resyncJobQuery = useJobStatus(resyncJobId, { enabled: !!resyncJobId });
 
     useEffect(() => {
-        if (!currentCommitSha || !repositoryId) return;
-
-        let cancelled = false;
-
-        async function fetchFilesForCommit() {
-            setLoadingFiles(true);
-            setSelectedFile(null);
-            try {
-                const data = await api.get<{ files?: FileData[] }>(`/api/repos/${id}/commits/${currentCommitSha}`);
-                if (cancelled) return;
-
-                const nextFiles = data.files || [];
-                setFiles(nextFiles);
-
-                const firstLoadable = nextFiles.find(file => file.shouldFetchContent || file.hasContent);
-                if (firstLoadable) {
-                    void selectFile(firstLoadable);
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    console.error('Failed to fetch files:', err);
-                }
-            } finally {
-                if (!cancelled) {
-                    setLoadingFiles(false);
-                }
-            }
+        if (!resyncJobQuery.data) return;
+        const d = resyncJobQuery.data;
+        const done =
+            d.status === 'completed' ||
+            d.status === 'failed' ||
+            d.ready ||
+            Number(d.processedCommits ?? 0) > 0;
+        if (done) {
+            setResyncJobId(null);
+            void queryClient.invalidateQueries({ queryKey: queryKeys.repos.commits(id) });
         }
+    }, [resyncJobQuery.data, id, queryClient]);
 
-        void fetchFilesForCommit();
+    const handleResync = useCallback(async () => {
+        if (!repository || resyncMutation.isPending || !!resyncJobId) return;
+        const result = await resyncMutation.mutateAsync({
+            repoId: id,
+            owner: repository.owner,
+            name: repository.name,
+        });
+        if (result.jobId) {
+            setResyncJobId(result.jobId);
+        } else {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.repos.commits(id) });
+        }
+    }, [repository, resyncMutation, resyncJobId, id, queryClient]);
 
-        return () => {
-            cancelled = true;
-        };
-    }, [currentCommitSha, id, repositoryId, selectFile]);
+    const syncing = resyncMutation.isPending || !!resyncJobId;
+
+    // ─── Navigation helpers ───────────────────────────────────────────────────
+    const selectFile = useCallback((file: FileData) => {
+        setSelectedFilePath(file.path);
+    }, []);
+
+    const goToCommit = useCallback((index: number) => {
+        if (index < 0 || index >= commits.length) return;
+        setCurrentIndex(index);
+        setSelectedFilePath(null);
+    }, [commits.length]);
+
+    const goNext = useCallback(() => {
+        setCurrentIndex((prev) => {
+            const next = Math.min(prev + 1, commits.length - 1);
+            if (next !== prev) setSelectedFilePath(null);
+            return next;
+        });
+    }, [commits.length]);
+
+    const goPrev = useCallback(() => {
+        setCurrentIndex((prev) => {
+            const next = Math.max(prev - 1, 0);
+            if (next !== prev) setSelectedFilePath(null);
+            return next;
+        });
+    }, []);
+
+    // Keyboard navigation
+    useEffect(() => {
+        function handleKeyDown(event: KeyboardEvent) {
+            if (showSettings || showHistoryModal) return;
+            if (event.key === 'ArrowRight' && event.metaKey) goNext();
+            else if (event.key === 'ArrowLeft' && event.metaKey) goPrev();
+        }
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [goNext, goPrev, showHistoryModal, showSettings]);
 
     const openFileFromAIReference = useCallback(async (path: string) => {
         const normalized = path
@@ -405,231 +307,45 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             .replace(/^b\//, '')
             .replace(/^\.\/+/, '')
             .replace(/\/+$/, '');
-
         if (!normalized) return;
 
         const exact =
-            files.find(file => file.path === normalized) ||
-            files.find(file => file.path.toLowerCase() === normalized.toLowerCase());
-
-        if (exact) {
-            await selectFile(exact);
-            return;
-        }
+            files.find((f) => f.path === normalized) ||
+            files.find((f) => f.path.toLowerCase() === normalized.toLowerCase());
+        if (exact) { selectFile(exact); return; }
 
         const suffix =
-            files.find(file => file.path.endsWith(`/${normalized}`)) ||
-            files.find(file => file.path.endsWith(normalized));
-
-        if (suffix) {
-            await selectFile(suffix);
-            return;
-        }
+            files.find((f) => f.path.endsWith(`/${normalized}`)) ||
+            files.find((f) => f.path.endsWith(normalized));
+        if (suffix) { selectFile(suffix); return; }
 
         const directoryPrefix = `${normalized}/`;
         const firstInDirectory = [...files]
-            .filter(file => file.path.startsWith(directoryPrefix))
+            .filter((f) => f.path.startsWith(directoryPrefix))
             .sort((a, b) => a.path.localeCompare(b.path))[0];
-
-        if (firstInDirectory) {
-            await selectFile(firstInDirectory);
-        }
+        if (firstInDirectory) selectFile(firstInDirectory);
     }, [files, selectFile]);
 
-    const handleResync = useCallback(async () => {
-        if (!repository || syncing) return;
-        setSyncing(true);
+    // ─── Derived memos ────────────────────────────────────────────────────────
+    const visibleFilePaths = useMemo(
+        () => files.filter((f) => f.shouldFetchContent || f.hasContent).map((f) => f.path),
+        [files]
+    );
 
-        try {
-            const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
-                url: `github.com/${repository.owner}/${repository.name}`,
-            });
+    const selectedCommitDiffFile = useMemo(
+        () => commitDiffFiles.find((f) => f.path === selectedCommitDiffPath) || commitDiffFiles[0] || null,
+        [commitDiffFiles, selectedCommitDiffPath]
+    );
 
-            if (data.jobId) {
-                let attempts = 0;
-                const maxAttempts = 60;
+    const selectedCompareFile = useMemo(
+        () => compareFiles.find((f) => f.path === selectedComparePath) || compareFiles[0] || null,
+        [compareFiles, selectedComparePath]
+    );
 
-                const poll = async (): Promise<void> => {
-                    attempts += 1;
-                    try {
-                        const jobResponse = await api.get<{
-                            status: string;
-                            error?: string;
-                            ready?: boolean;
-                            processedCommits?: number;
-                        }>(`/api/jobs/${data.jobId}`);
+    const loadingMoreCommits = commitsQuery.isFetchingNextPage;
 
-                        const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
-                        if (jobResponse.status === 'completed' || jobResponse.ready || hasProcessedCommits) {
-                            await fetchRepositoryData(currentCommit?.sha, false);
-                            setSyncing(false);
-                        } else if (jobResponse.status === 'failed') {
-                            console.error('Sync failed:', jobResponse.error);
-                            setSyncing(false);
-                        } else if (attempts < maxAttempts) {
-                            setTimeout(poll, 2000);
-                        } else {
-                            console.error('Sync timed out');
-                            setSyncing(false);
-                        }
-                    } catch (pollError) {
-                        console.error('Polling error:', pollError);
-                        setSyncing(false);
-                    }
-                };
-
-                void poll();
-            } else {
-                await fetchRepositoryData(currentCommit?.sha, false);
-                setSyncing(false);
-            }
-        } catch (err) {
-            console.error('Failed to trigger resync:', err);
-            setSyncing(false);
-        }
-    }, [currentCommit?.sha, fetchRepositoryData, repository, syncing]);
-
-    const goToCommit = useCallback((index: number) => {
-        if (index < 0 || index >= commits.length) return;
-        setCurrentIndex(index);
-        setSelectedFile(null);
-    }, [commits.length]);
-
-    const goNext = useCallback(() => {
-        setCurrentIndex(prev => {
-            if (commits.length === 0) return 0;
-            const nextIndex = Math.min(prev + 1, commits.length - 1);
-            if (nextIndex !== prev) {
-                setSelectedFile(null);
-            }
-            return nextIndex;
-        });
-    }, [commits.length]);
-
-    const goPrev = useCallback(() => {
-        setCurrentIndex(prev => {
-            const nextIndex = Math.max(prev - 1, 0);
-            if (nextIndex !== prev) {
-                setSelectedFile(null);
-            }
-            return nextIndex;
-        });
-    }, []);
-
-    useEffect(() => {
-        function handleKeyDown(event: KeyboardEvent) {
-            if (showSettings || showHistoryModal) return;
-
-            if (event.key === 'ArrowRight' && event.metaKey) {
-                goNext();
-            } else if (event.key === 'ArrowLeft' && event.metaKey) {
-                goPrev();
-            }
-        }
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [goNext, goPrev, showHistoryModal, showSettings]);
-
-    useEffect(() => {
-        if (!currentCommit?.sha) return;
-        if (centerView !== 'commit-diff') return;
-
-        let cancelled = false;
-
-        async function fetchCommitDiffData() {
-            setCommitDiffLoading(true);
-            setCommitDiffError(null);
-
-            try {
-                const data = await api.get<CommitDiffResponse>(`/api/repos/${id}/commits/${currentCommit.sha}/diff`);
-                if (cancelled) return;
-
-                const filesChanged = data.files || [];
-                setCommitDiffFiles(filesChanged);
-                setSelectedCommitDiffPath(prev => {
-                    if (prev && filesChanged.some(file => file.path === prev)) {
-                        return prev;
-                    }
-                    return filesChanged[0]?.path || '';
-                });
-            } catch (err) {
-                if (!cancelled) {
-                    setCommitDiffFiles([]);
-                    setCommitDiffError(err instanceof Error ? err.message : 'Failed to load commit diff');
-                }
-            } finally {
-                if (!cancelled) {
-                    setCommitDiffLoading(false);
-                }
-            }
-        }
-
-        void fetchCommitDiffData();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [centerView, currentCommit?.sha, id]);
-
-    useEffect(() => {
-        if (commits.length === 0) return;
-
-        const head = commits[currentIndex]?.sha || commits[commits.length - 1].sha;
-        const base = commits[Math.max(0, currentIndex - 1)]?.sha || head;
-
-        setCompareHeadSha(head);
-        setCompareBaseSha(base);
-    }, [commits, currentIndex]);
-
-    useEffect(() => {
-        if (centerView !== 'file-diff') return;
-        if (!compareBaseSha || !compareHeadSha) return;
-
-        let cancelled = false;
-
-        async function fetchCompareData() {
-            setCompareLoading(true);
-            setCompareError(null);
-
-            try {
-                const data = await api.get<CompareDiffResponse>(
-                    `/api/repos/${id}/compare?base=${encodeURIComponent(compareBaseSha)}&head=${encodeURIComponent(compareHeadSha)}`
-                );
-
-                if (cancelled) return;
-
-                setCompareFiles(data.files || []);
-                setCompareStatus(data.status || 'unknown');
-                setCompareTotalFiles(data.totalFiles || data.files.length || 0);
-                setCompareAheadBy(data.aheadBy || 0);
-                setCompareBehindBy(data.behindBy || 0);
-                setSelectedComparePath(prev => {
-                    if (prev && data.files.some(file => file.path === prev)) {
-                        return prev;
-                    }
-                    return data.files[0]?.path || '';
-                });
-            } catch (err) {
-                if (!cancelled) {
-                    setCompareFiles([]);
-                    setCompareError(err instanceof Error ? err.message : 'Failed to compare commits');
-                }
-            } finally {
-                if (!cancelled) {
-                    setCompareLoading(false);
-                }
-            }
-        }
-
-        void fetchCompareData();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [centerView, compareBaseSha, compareHeadSha, id]);
-
-    if (loading) {
+    // ─── Render states ────────────────────────────────────────────────────────
+    if (commitsQuery.isLoading) {
         return (
             <div className={styles.loadingState}>
                 <Loader2 size={32} className={styles.spinner} />
@@ -638,13 +354,19 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         );
     }
 
-    if (error) {
+    // Show error only if we're NOT actively waiting for ingest to complete
+    if (commitsQuery.isError && !waitingForInitialCommits) {
         return (
             <div className={styles.errorState}>
-                <p>{error}</p>
-                <button className="btn btn-primary" onClick={() => router.push('/')}>
-                    Go Home
-                </button>
+                <p>{(commitsQuery.error as Error)?.message || 'Something went wrong'}</p>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button className="btn btn-secondary" onClick={() => commitsQuery.refetch()}>
+                        Retry
+                    </button>
+                    <button className="btn btn-primary" onClick={() => router.push('/')}>
+                        Go Home
+                    </button>
+                </div>
             </div>
         );
     }
@@ -655,20 +377,24 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 <div className={styles.loadingState}>
                     <Loader2 size={32} className={styles.spinner} />
                     <p>
-                        {ingestStatus === 'processing'
-                            ? `Indexing commits... ${ingestProgress}%`
+                        {jobData?.status === 'processing'
+                            ? `Indexing commits... ${jobData.progress ?? 0}%`
                             : 'Preparing repository...'}
                     </p>
                 </div>
             );
         }
-
         return (
             <div className={styles.errorState}>
                 <p>No commits found for this repository.</p>
-                <button className="btn btn-primary" onClick={() => router.push('/')}>
-                    Go Home
-                </button>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <button className="btn btn-secondary" onClick={() => commitsQuery.refetch()}>
+                        Retry
+                    </button>
+                    <button className="btn btn-primary" onClick={() => router.push('/')}>
+                        Go Home
+                    </button>
+                </div>
             </div>
         );
     }
@@ -695,7 +421,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                 Chapter {currentIndex + 1} of {commits.length}
                                 {loadingMoreCommits ? ' (loading more...)' : ''}
                             </span>
-                            <span className={styles.chapterTitle}>{currentCommit.message.split('\n')[0]}</span>
+                            <span className={styles.chapterTitle}>{currentCommit?.message.split('\n')[0]}</span>
                         </div>
                         <ChevronDown size={16} className={styles.chapterChevron} />
                     </button>
@@ -743,7 +469,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                 <h3 className={styles.panelTitle}>Files</h3>
                             </div>
                             <div className={styles.fileList}>
-                                {loadingFiles ? (
+                                {filesQuery.isLoading ? (
                                     <div className={styles.loadingFiles}>
                                         <Loader2 size={24} className={styles.spinner} />
                                     </div>
@@ -765,50 +491,38 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                             <div className={styles.commitMeta}>
                                 <div className={styles.commitSha}>
                                     <GitCommit size={14} />
-                                    <code>{currentCommit.sha.substring(0, 7)}</code>
+                                    <code>{currentCommit?.sha.substring(0, 7)}</code>
                                 </div>
                                 <span className={styles.commitAuthor}>
                                     <User size={14} />
-                                    {currentCommit.authorName || 'Unknown'}
+                                    {currentCommit?.authorName || 'Unknown'}
                                 </span>
                                 <span className={styles.commitDate}>
                                     <Calendar size={14} />
-                                    {new Date(currentCommit.date).toLocaleDateString()}
+                                    {currentCommit ? new Date(currentCommit.date).toLocaleDateString() : ''}
                                 </span>
                             </div>
                         </div>
 
                         <div className={styles.viewTabs}>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'code' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('code')}
-                            >
-                                Code
-                            </button>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'commit-diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('commit-diff')}
-                            >
-                                Commit Diff
-                            </button>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'file-diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('file-diff')}
-                            >
-                                File Diff
-                            </button>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'story' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('story')}
-                            >
-                                Story Mode
-                            </button>
+                            {(['code', 'commit-diff', 'file-diff', 'story'] as CenterView[]).map((view) => (
+                                <button
+                                    key={view}
+                                    className={`${styles.viewTab} ${centerView === view ? styles.viewTabActive : ''}`}
+                                    onClick={() => setCenterView(view)}
+                                >
+                                    {view === 'code' ? 'Code'
+                                        : view === 'commit-diff' ? 'Commit Diff'
+                                            : view === 'file-diff' ? 'File Diff'
+                                                : 'Story Mode'}
+                                </button>
+                            ))}
                         </div>
 
                         <div className={styles.codeArea}>
                             <div className={styles.codeDisplay}>
                                 {centerView === 'code' && (
-                                    loadingContent ? (
+                                    fileContentQuery.isFetching ? (
                                         <div className={styles.loadingFiles}>
                                             <Loader2 size={24} className={styles.spinner} />
                                             <p>Loading content...</p>
@@ -834,16 +548,21 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     <div className={styles.diffContainer}>
                                         <div className={styles.diffToolbar}>
                                             <div className={styles.diffStats}>
-                                                <span>{commitDiffFiles.length} changed file{commitDiffFiles.length === 1 ? '' : 's'}</span>
+                                                <span>
+                                                    {commitDiffFiles.length} changed file
+                                                    {commitDiffFiles.length === 1 ? '' : 's'}
+                                                </span>
                                             </div>
                                             <div className={styles.diffToolbarControls}>
                                                 <select
                                                     value={selectedCommitDiffPath}
-                                                    onChange={event => setSelectedCommitDiffPath(event.target.value)}
+                                                    onChange={(e) => setCommitDiffPathOverride(e.target.value)}
                                                     disabled={commitDiffFiles.length === 0}
                                                 >
-                                                    {commitDiffFiles.length === 0 && <option value="">No changed files</option>}
-                                                    {commitDiffFiles.map(file => (
+                                                    {commitDiffFiles.length === 0 && (
+                                                        <option value="">No changed files</option>
+                                                    )}
+                                                    {commitDiffFiles.map((file) => (
                                                         <option key={file.path} value={file.path}>
                                                             {file.path}
                                                         </option>
@@ -866,13 +585,15 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                             </div>
                                         </div>
 
-                                        {commitDiffLoading ? (
+                                        {commitDiffQuery.isFetching ? (
                                             <div className={styles.loadingFiles}>
                                                 <Loader2 size={24} className={styles.spinner} />
                                                 <p>Loading commit diff...</p>
                                             </div>
-                                        ) : commitDiffError ? (
-                                            <div className={styles.errorInline}>{commitDiffError}</div>
+                                        ) : commitDiffQuery.isError ? (
+                                            <div className={styles.errorInline}>
+                                                {(commitDiffQuery.error as Error)?.message || 'Failed to load commit diff'}
+                                            </div>
                                         ) : selectedCommitDiffFile ? (
                                             <>
                                                 <div className={styles.diffMeta}>
@@ -880,10 +601,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                     <span>+{selectedCommitDiffFile.additions}</span>
                                                     <span>-{selectedCommitDiffFile.deletions}</span>
                                                 </div>
-                                                <DiffViewer
-                                                    patch={selectedCommitDiffFile.patch}
-                                                    mode={diffViewMode}
-                                                />
+                                                <DiffViewer patch={selectedCommitDiffFile.patch} mode={diffViewMode} />
                                             </>
                                         ) : (
                                             <div className={styles.noFile}>
@@ -902,11 +620,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                     Base
                                                     <select
                                                         value={compareBaseSha}
-                                                        onChange={event => setCompareBaseSha(event.target.value)}
+                                                        onChange={(e) => setCompareBaseOverride(e.target.value)}
                                                     >
                                                         {commits.map((commit, index) => (
                                                             <option key={`base-${commit.sha}`} value={commit.sha}>
-                                                                {index + 1}. {commit.sha.slice(0, 7)} - {commit.message.split('\n')[0]}
+                                                                {index + 1}. {commit.sha.slice(0, 7)} – {commit.message.split('\n')[0]}
                                                             </option>
                                                         ))}
                                                     </select>
@@ -915,11 +633,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                     Head
                                                     <select
                                                         value={compareHeadSha}
-                                                        onChange={event => setCompareHeadSha(event.target.value)}
+                                                        onChange={(e) => setCompareHeadOverride(e.target.value)}
                                                     >
                                                         {commits.map((commit, index) => (
                                                             <option key={`head-${commit.sha}`} value={commit.sha}>
-                                                                {index + 1}. {commit.sha.slice(0, 7)} - {commit.message.split('\n')[0]}
+                                                                {index + 1}. {commit.sha.slice(0, 7)} – {commit.message.split('\n')[0]}
                                                             </option>
                                                         ))}
                                                     </select>
@@ -928,11 +646,13 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                     File
                                                     <select
                                                         value={selectedComparePath}
-                                                        onChange={event => setSelectedComparePath(event.target.value)}
+                                                        onChange={(e) => setComparePathOverride(e.target.value)}
                                                         disabled={compareFiles.length === 0}
                                                     >
-                                                        {compareFiles.length === 0 && <option value="">No changed files</option>}
-                                                        {compareFiles.map(file => (
+                                                        {compareFiles.length === 0 && (
+                                                            <option value="">No changed files</option>
+                                                        )}
+                                                        {compareFiles.map((file) => (
                                                             <option key={file.path} value={file.path}>
                                                                 {file.path}
                                                             </option>
@@ -957,19 +677,21 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         </div>
 
                                         <div className={styles.compareSummary}>
-                                            <span>Status: {compareStatus}</span>
-                                            <span>Files changed: {compareTotalFiles}</span>
-                                            <span>Ahead: {compareAheadBy}</span>
-                                            <span>Behind: {compareBehindBy}</span>
+                                            <span>Status: {compareDiffQuery.data?.status || 'unknown'}</span>
+                                            <span>Files changed: {compareDiffQuery.data?.totalFiles ?? compareFiles.length}</span>
+                                            <span>Ahead: {compareDiffQuery.data?.aheadBy ?? 0}</span>
+                                            <span>Behind: {compareDiffQuery.data?.behindBy ?? 0}</span>
                                         </div>
 
-                                        {compareLoading ? (
+                                        {compareDiffQuery.isFetching ? (
                                             <div className={styles.loadingFiles}>
                                                 <Loader2 size={24} className={styles.spinner} />
                                                 <p>Comparing commits...</p>
                                             </div>
-                                        ) : compareError ? (
-                                            <div className={styles.errorInline}>{compareError}</div>
+                                        ) : compareDiffQuery.isError ? (
+                                            <div className={styles.errorInline}>
+                                                {(compareDiffQuery.error as Error)?.message || 'Failed to compare commits'}
+                                            </div>
                                         ) : compareBaseSha === compareHeadSha ? (
                                             <div className={styles.noFile}>
                                                 <h3>Same commit selected</h3>

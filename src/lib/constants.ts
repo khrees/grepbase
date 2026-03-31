@@ -46,8 +46,13 @@ export const CACHE_TTL = {
 export const GITHUB = {
     API_BASE: 'https://api.github.com',
     MAX_COMMITS_PER_REQUEST: 100,
-    MAX_COMMITS_PER_REPO: 5000,
+    /** Hard cap on commits pulled during initial ingest.
+     *  500 = 5 GitHub pages = fast first-load; users can trigger a resync to fetch more. */
+    MAX_COMMITS_PER_REPO: 500,
+    /** Number of commit pages to fetch in parallel during ingest. */
+    PARALLEL_PAGE_FETCHES: 3,
 } as const;
+
 
 // Ingestion settings
 export const INGEST = {
