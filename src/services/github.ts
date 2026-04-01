@@ -4,11 +4,26 @@
  */
 
 import { cache } from './cache';
-import { CACHE_TTL, GITHUB } from '@/lib/constants';
+import { CACHE_TTL, GITHUB, TIMEOUTS } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { getPlatformEnv } from '@/lib/platform/context';
 
 const githubLogger = logger.child({ service: 'github' });
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = TIMEOUTS.GITHUB_API): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+        return response;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
 
 export interface GitHubRepo {
     owner: string;
@@ -83,7 +98,7 @@ function getGitHubHeaders(accept = 'application/vnd.github.v3+json', includeServ
             const platform = getPlatformEnv();
             token = platform.getSecret('GITHUB_TOKEN');
         } catch {
-            // Not in request context
+            githubLogger.debug('Not in request context, cannot get GITHUB_TOKEN from platform');
         }
     }
 
@@ -112,7 +127,7 @@ function encodeGitHubPath(path: string): string {
 }
 
 export async function ensureRepositoryIsPublic(owner: string, repo: string): Promise<void> {
-    const response = await fetch(buildRepoApiBase(owner, repo), {
+    const response = await fetchWithTimeout(buildRepoApiBase(owner, repo), {
         headers: getGitHubHeaders(),
     });
 
@@ -143,7 +158,7 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
 
     githubLogger.info({ owner, repo }, 'Fetching repository from GitHub API');
 
-    const response = await fetch(buildRepoApiBase(owner, repo), {
+    const response = await fetchWithTimeout(buildRepoApiBase(owner, repo), {
         headers: getGitHubHeaders(),
     });
 
@@ -182,7 +197,7 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
  */
 export async function fetchReadme(owner: string, repo: string): Promise<string | null> {
     try {
-        const response = await fetch(`${buildRepoApiBase(owner, repo)}/readme`, {
+        const response = await fetchWithTimeout(`${buildRepoApiBase(owner, repo)}/readme`, {
             headers: getGitHubHeaders('application/vnd.github.v3.raw'),
         });
 
@@ -254,7 +269,7 @@ export async function fetchCommitHistoryPage(
     commitsUrl.searchParams.set('per_page', String(safePerPage));
     commitsUrl.searchParams.set('page', String(safePage));
 
-    const response = await fetch(commitsUrl.toString(), {
+    const response = await fetchWithTimeout(commitsUrl.toString(), {
         headers: getGitHubHeaders(),
     });
 
@@ -291,7 +306,7 @@ export async function fetchFilesAtCommit(
     const treeUrl = new URL(`${buildRepoApiBase(owner, repo)}/git/trees/${encodeURIComponent(sha)}`);
     treeUrl.searchParams.set('recursive', '1');
 
-    const response = await fetch(treeUrl.toString(), {
+    const response = await fetchWithTimeout(treeUrl.toString(), {
         headers: getGitHubHeaders(),
     });
 
@@ -334,7 +349,7 @@ export async function fetchFileContent(
         const contentUrl = new URL(`${buildRepoApiBase(owner, repo)}/contents/${encodedPath}`);
         contentUrl.searchParams.set('ref', sha);
 
-        const response = await fetch(contentUrl.toString(), {
+        const response = await fetchWithTimeout(contentUrl.toString(), {
             headers: getGitHubHeaders('application/vnd.github.v3.raw'),
         });
 
@@ -342,7 +357,8 @@ export async function fetchFileContent(
         const text = await response.text();
         await cache.set(cacheKey, text, CACHE_TTL.WEEK);
         return text;
-    } catch {
+    } catch (error) {
+        githubLogger.warn({ owner, repo, sha, path, error }, 'Failed to fetch file content');
         return null;
     }
 }
@@ -360,7 +376,7 @@ export async function fetchCommitDiff(
     if (cached) return cached;
 
     try {
-        const response = await fetch(
+        const response = await fetchWithTimeout(
             `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
             {
                 headers: getGitHubHeaders('application/vnd.github.v3.diff'),
@@ -371,7 +387,8 @@ export async function fetchCommitDiff(
         const text = await response.text();
         await cache.set(cacheKey, text, CACHE_TTL.WEEK);
         return text;
-    } catch {
+    } catch (error) {
+        githubLogger.warn({ owner, repo, sha, error }, 'Failed to fetch commit diff');
         return null;
     }
 }
@@ -388,7 +405,7 @@ export async function fetchCommitFileDiffs(
     const cached = await cache.get<GitHubCommitFileDiff[]>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
         { headers: getGitHubHeaders() }
     );
@@ -437,7 +454,7 @@ export async function fetchCompareDiff(
     const cached = await cache.get<GitHubCompareDiff>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `${buildRepoApiBase(owner, repo)}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
         { headers: getGitHubHeaders() }
     );

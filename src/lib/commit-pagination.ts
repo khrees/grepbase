@@ -15,7 +15,6 @@ export interface PaginatedCommitsResponse {
 }
 
 const MAX_PAGE_SIZE = 100;
-const MAX_PAGES = 200;
 
 export async function fetchCommitsPageForRepository(
     repoId: string,
@@ -38,37 +37,4 @@ export async function fetchInitialCommitsForRepository(
     return fetchCommitsPageForRepository(repoId, 1, MAX_PAGE_SIZE);
 }
 
-export async function fetchAllCommitsForRepository(repoId: string): Promise<{
-    repository: Repository;
-    commits: Commit[];
-}> {
-    let page = 1;
-    let repository: Repository | null = null;
-    const allCommits: Commit[] = [];
 
-    while (page <= MAX_PAGES) {
-        const response = await fetchCommitsPageForRepository(repoId, page, MAX_PAGE_SIZE);
-
-        if (!repository) {
-            repository = response.repository;
-        }
-
-        if (response.commits.length === 0) {
-            break;
-        }
-
-        allCommits.push(...response.commits);
-
-        if (!response.pagination?.hasNext) {
-            break;
-        }
-
-        page += 1;
-    }
-
-    if (!repository) {
-        throw new Error('Repository not found');
-    }
-
-    return { repository, commits: allCommits };
-}

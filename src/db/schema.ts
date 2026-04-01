@@ -2,7 +2,7 @@ import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqli
 
 // Repositories table - stores cached GitHub repo metadata
 export const repositories = sqliteTable('repositories', {
-    id: integer('id').primaryKey({ autoIncrement: true }),
+    id: text('id').primaryKey(), // nanoid(16)
     url: text('url').notNull().unique(),
     owner: text('owner').notNull(),
     name: text('name').notNull(),
@@ -19,7 +19,7 @@ export const repositories = sqliteTable('repositories', {
 // Commits table - stores commit history for each repo
 export const commits = sqliteTable('commits', {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    repoId: integer('repo_id').notNull().references(() => repositories.id, { onDelete: 'cascade' }),
+    repoId: text('repo_id').notNull().references(() => repositories.id, { onDelete: 'cascade' }),
     sha: text('sha').notNull(),
     message: text('message').notNull(),
     authorName: text('author_name'),
@@ -62,7 +62,7 @@ export const ingestJobs = sqliteTable('ingest_jobs', {
     jobId: text('job_id').notNull().unique(),
     url: text('url').notNull(),
     status: text('status').notNull(), // 'pending', 'processing', 'completed', 'failed'
-    repoId: integer('repo_id').references(() => repositories.id),
+    repoId: text('repo_id').references(() => repositories.id),
     progress: integer('progress').default(0), // 0-100
     totalCommits: integer('total_commits').default(0),
     processedCommits: integer('processed_commits').default(0),

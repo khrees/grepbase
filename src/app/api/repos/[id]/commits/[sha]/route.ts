@@ -3,12 +3,10 @@ import { and, eq } from 'drizzle-orm';
 import { repositories, commits, files } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS, INGEST, shouldFetchFileContent } from '@/lib/constants';
+import { RATE_LIMITS, INGEST, shouldFetchFileContent, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchFilesAtCommit, getLanguageFromPath } from '@/services/github';
-
-const COMMIT_SHA_REGEX = /^[0-9a-f]{7,64}$/i;
 
 export async function GET(
     request: NextRequest,
@@ -33,11 +31,7 @@ export async function GET(
         }
 
         const { id, sha } = await params;
-        const repoId = Number.parseInt(id, 10);
-
-        if (Number.isNaN(repoId)) {
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
+        const repoId = id;
 
         if (!COMMIT_SHA_REGEX.test(sha)) {
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });
@@ -118,7 +112,7 @@ export async function GET(
 
             const batchSize = INGEST.FILE_BATCH_INSERT_SIZE;
             for (let i = 0; i < dbFiles.length; i += batchSize) {
-                await db.insert(files).values(dbFiles.slice(i, i + batchSize));
+                await db.insert(files).values(dbFiles.slice(i, i + batchSize)).onConflictDoNothing();
             }
         }
 

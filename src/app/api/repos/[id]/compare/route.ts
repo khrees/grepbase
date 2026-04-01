@@ -3,13 +3,10 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { repositories, commits } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS } from '@/lib/constants';
+import { RATE_LIMITS, COMMIT_SHA_REGEX, MAX_FILE_PATH_LENGTH } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchCompareDiff } from '@/services/github';
-
-const COMMIT_SHA_REGEX = /^[0-9a-f]{7,64}$/i;
-const MAX_FILE_PATH_LENGTH = 1024;
 
 export async function GET(
     request: NextRequest,
@@ -34,11 +31,7 @@ export async function GET(
         }
 
         const { id } = await params;
-        const repoId = Number.parseInt(id, 10);
-
-        if (Number.isNaN(repoId)) {
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
+        const repoId = id;
 
         const repoAccess = await hasRepoAccess(repoId, session.sessionId);
         if (!repoAccess) {

@@ -1,17 +1,15 @@
 import { getPlatformEnv } from '@/lib/platform/context';
 import { logger } from '@/lib/logger';
 import type { PlatformCache } from '@/lib/platform/types';
+import { RESOURCE_ACCESS, shouldFailOpen } from '@/lib/constants';
 
 const accessLogger = logger.child({ service: 'resource-access' });
 
-const ACCESS_TTL_SECONDS = 60 * 60 * 24 * 180; // 180 days
 const REPO_ACCESS_PREFIX = 'access:repo:';
 const SESSION_REPOS_PREFIX = 'access:session:repos:';
 const JOB_ACCESS_PREFIX = 'access:job:';
 const REPO_SESSION_ACCESS_PREFIX = 'access:repo-session:';
 const JOB_SESSION_ACCESS_PREFIX = 'access:job-session:';
-const MAX_REPO_IDS_PER_SESSION = 500;
-const MAX_SESSIONS_PER_REPO = 500;
 
 interface RepoAccessBlob {
     version: 1;
@@ -20,7 +18,7 @@ interface RepoAccessBlob {
 
 interface SessionReposBlob {
     version: 1;
-    repoIds: number[];
+    repoIds: string[];
 }
 
 interface JobAccessBlob {
@@ -28,16 +26,16 @@ interface JobAccessBlob {
     sessions: string[];
 }
 
-function getAccessStoreOrThrow(): PlatformCache {
-    const platform = getPlatformEnv();
-    const kv = platform.getCache();
-    if (!kv) {
-        throw new Error('Resource access control requires KV namespace configuration.');
+function getAccessStoreOrFailOpen(): PlatformCache | null {
+    try {
+        const platform = getPlatformEnv();
+        return platform.getCache();
+    } catch {
+        return null;
     }
-    return kv;
 }
 
-function getRepoAccessKey(repoId: number): string {
+function getRepoAccessKey(repoId: string): string {
     return `${REPO_ACCESS_PREFIX}${repoId}`;
 }
 
@@ -49,19 +47,12 @@ function getJobAccessKey(jobId: string): string {
     return `${JOB_ACCESS_PREFIX}${jobId}`;
 }
 
-function getRepoSessionAccessKey(repoId: number, sessionId: string): string {
+function getRepoSessionAccessKey(repoId: string, sessionId: string): string {
     return `${REPO_SESSION_ACCESS_PREFIX}${repoId}:${sessionId}`;
 }
 
 function getJobSessionAccessKey(jobId: string, sessionId: string): string {
     return `${JOB_SESSION_ACCESS_PREFIX}${jobId}:${sessionId}`;
-}
-
-function shouldFailOpenAccess(): boolean {
-    if (process.env.RESOURCE_ACCESS_FAIL_OPEN === 'true') {
-        return true;
-    }
-    return process.env.NODE_ENV !== 'production';
 }
 
 function normalizeRepoAccess(blob: unknown): RepoAccessBlob {
@@ -81,8 +72,7 @@ function normalizeSessionRepos(blob: unknown): SessionReposBlob {
     }
     const repoIds = Array.isArray((blob as { repoIds?: unknown }).repoIds)
         ? (blob as { repoIds: unknown[] }).repoIds
-            .map(value => (typeof value === 'number' ? value : Number.parseInt(String(value), 10)))
-            .filter(value => Number.isInteger(value) && value > 0)
+            .filter((value): value is string => typeof value === 'string' && value.length > 0)
         : [];
     return { version: 1, repoIds };
 }
@@ -103,8 +93,12 @@ function normalizeJobAccess(blob: unknown): JobAccessBlob {
     return { version: 1, sessions };
 }
 
-export async function grantRepoAccess(repoId: number, sessionId: string): Promise<void> {
-    const kv = getAccessStoreOrThrow();
+export async function grantRepoAccess(repoId: string, sessionId: string): Promise<void> {
+    const kv = getAccessStoreOrFailOpen();
+    if (!kv) {
+        if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) return;
+        throw new Error('Resource access control requires KV namespace configuration.');
+    }
 
     const repoAccessKey = getRepoAccessKey(repoId);
     const sessionReposKey = getSessionReposKey(sessionId);
@@ -121,27 +115,31 @@ export async function grantRepoAccess(repoId: number, sessionId: string): Promis
     if (!repoBlob.sessions.includes(sessionId)) {
         repoBlob.sessions.push(sessionId);
     }
-    if (repoBlob.sessions.length > MAX_SESSIONS_PER_REPO) {
-        repoBlob.sessions = repoBlob.sessions.slice(repoBlob.sessions.length - MAX_SESSIONS_PER_REPO);
+    if (repoBlob.sessions.length > RESOURCE_ACCESS.MAX_SESSIONS_PER_REPO) {
+        repoBlob.sessions = repoBlob.sessions.slice(repoBlob.sessions.length - RESOURCE_ACCESS.MAX_SESSIONS_PER_REPO);
     }
 
     if (!sessionBlob.repoIds.includes(repoId)) {
         sessionBlob.repoIds.push(repoId);
     }
-    if (sessionBlob.repoIds.length > MAX_REPO_IDS_PER_SESSION) {
-        sessionBlob.repoIds = sessionBlob.repoIds.slice(sessionBlob.repoIds.length - MAX_REPO_IDS_PER_SESSION);
+    if (sessionBlob.repoIds.length > RESOURCE_ACCESS.MAX_REPO_IDS_PER_SESSION) {
+        sessionBlob.repoIds = sessionBlob.repoIds.slice(sessionBlob.repoIds.length - RESOURCE_ACCESS.MAX_REPO_IDS_PER_SESSION);
     }
 
     await Promise.all([
-        kv.set(repoSessionAccessKey, 1, ACCESS_TTL_SECONDS),
-        kv.set(repoAccessKey, repoBlob, ACCESS_TTL_SECONDS),
-        kv.set(sessionReposKey, sessionBlob, ACCESS_TTL_SECONDS),
+        kv.set(repoSessionAccessKey, 1, RESOURCE_ACCESS.TTL_SECONDS),
+        kv.set(repoAccessKey, repoBlob, RESOURCE_ACCESS.TTL_SECONDS),
+        kv.set(sessionReposKey, sessionBlob, RESOURCE_ACCESS.TTL_SECONDS),
     ]);
 }
 
-export async function hasRepoAccess(repoId: number, sessionId: string): Promise<boolean> {
+export async function hasRepoAccess(repoId: string, sessionId: string): Promise<boolean> {
     try {
-        const kv = getAccessStoreOrThrow();
+        const kv = getAccessStoreOrFailOpen();
+        if (!kv) {
+            if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) return true;
+            throw new Error('Resource access control requires KV namespace configuration.');
+        }
         const repoSessionFlag = await kv.get<number | string>(getRepoSessionAccessKey(repoId, sessionId));
 
         if (repoSessionFlag !== null && repoSessionFlag !== undefined) {
@@ -162,7 +160,7 @@ export async function hasRepoAccess(repoId: number, sessionId: string): Promise<
         return sessionBlob.repoIds.includes(repoId);
     } catch (error) {
         accessLogger.error({ error, repoId, sessionId }, 'Failed to verify repository access');
-        if (shouldFailOpenAccess()) {
+        if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) {
             accessLogger.warn({ repoId, sessionId }, 'Failing open for repository access check');
             return true;
         }
@@ -170,15 +168,19 @@ export async function hasRepoAccess(repoId: number, sessionId: string): Promise<
     }
 }
 
-export async function listRepoIdsForSession(sessionId: string): Promise<number[]> {
+export async function listRepoIdsForSession(sessionId: string): Promise<string[]> {
     try {
-        const kv = getAccessStoreOrThrow();
+        const kv = getAccessStoreOrFailOpen();
+        if (!kv) {
+            if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) return [];
+            throw new Error('Resource access control requires KV namespace configuration.');
+        }
         const sessionBlobRaw = await kv.get<SessionReposBlob>(getSessionReposKey(sessionId));
         const sessionBlob = normalizeSessionRepos(sessionBlobRaw);
         return sessionBlob.repoIds;
     } catch (error) {
         accessLogger.error({ error, sessionId }, 'Failed to list repositories for session');
-        if (shouldFailOpenAccess()) {
+        if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) {
             return [];
         }
         throw error;
@@ -186,14 +188,22 @@ export async function listRepoIdsForSession(sessionId: string): Promise<number[]
 }
 
 export async function grantJobAccess(jobId: string, sessionId: string): Promise<void> {
-    const kv = getAccessStoreOrThrow();
+    const kv = getAccessStoreOrFailOpen();
+    if (!kv) {
+        if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) return;
+        throw new Error('Resource access control requires KV namespace configuration.');
+    }
     const jobSessionAccessKey = getJobSessionAccessKey(jobId, sessionId);
-    await kv.set(jobSessionAccessKey, 1, ACCESS_TTL_SECONDS);
+    await kv.set(jobSessionAccessKey, 1, RESOURCE_ACCESS.TTL_SECONDS);
 }
 
 export async function hasJobAccess(jobId: string, sessionId: string): Promise<boolean> {
     try {
-        const kv = getAccessStoreOrThrow();
+        const kv = getAccessStoreOrFailOpen();
+        if (!kv) {
+            if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) return true;
+            throw new Error('Resource access control requires KV namespace configuration.');
+        }
         const jobSessionFlag = await kv.get<number | string>(getJobSessionAccessKey(jobId, sessionId));
 
         if (jobSessionFlag !== null && jobSessionFlag !== undefined) {
@@ -206,7 +216,7 @@ export async function hasJobAccess(jobId: string, sessionId: string): Promise<bo
         return blob.sessions.includes(sessionId);
     } catch (error) {
         accessLogger.error({ error, jobId, sessionId }, 'Failed to verify job access');
-        if (shouldFailOpenAccess()) {
+        if (shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) {
             accessLogger.warn({ jobId, sessionId }, 'Failing open for job access check');
             return true;
         }
@@ -214,12 +224,12 @@ export async function hasJobAccess(jobId: string, sessionId: string): Promise<bo
     }
 }
 
-export async function safeGrantRepoAccess(repoId: number, sessionId: string): Promise<void> {
+export async function safeGrantRepoAccess(repoId: string, sessionId: string): Promise<void> {
     try {
         await grantRepoAccess(repoId, sessionId);
     } catch (error) {
         accessLogger.error({ error, repoId }, 'Failed to grant repository access');
-        if (!shouldFailOpenAccess()) {
+        if (!shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) {
             throw error;
         }
     }
@@ -230,7 +240,7 @@ export async function safeGrantJobAccess(jobId: string, sessionId: string): Prom
         await grantJobAccess(jobId, sessionId);
     } catch (error) {
         accessLogger.error({ error, jobId }, 'Failed to grant job access');
-        if (!shouldFailOpenAccess()) {
+        if (!shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) {
             throw error;
         }
     }

@@ -40,7 +40,7 @@ export type AIProviderTypeFromSchema = z.infer<typeof aiProviderTypeSchema>;
 // Explain API request
 export const explainRequestSchema = z.object({
     type: z.enum(['commit', 'project', 'question', 'day-summary', 'story']),
-    repoId: z.number().int().positive(),
+    repoId: z.string().min(1),
     commitSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
     startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
     endSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
@@ -100,7 +100,7 @@ export const paginationSchema = z.object({
 
 // Commit query params
 export const commitQuerySchema = z.object({
-    repoId: z.number().int().positive(),
+    repoId: z.string().min(1),
     page: z.number().int().positive().optional().default(1),
     limit: z.number().int().positive().max(100).optional().default(50),
 });

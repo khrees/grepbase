@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { nanoid } from 'nanoid';
 import { repositories, commits, files, ingestJobs } from '@/db/schema';
 import {
     fetchRepository,
@@ -62,30 +63,41 @@ export async function processRepoIngestion({
             .set({ progress: 20, updatedAt: now })
             .where(eq(ingestJobs.jobId, jobId));
 
-        const repoResult = await db
-            .insert(repositories)
-            .values({
-                url,
-                owner,
-                name: repoName,
-                description: repoDetails.description,
-                readme: null, // Readme fetched separately now
-                stars: repoDetails.stars,
-                defaultBranch: repoDetails.defaultBranch,
-                lastFetched: now,
-                createdAt: now,
-            })
-            .onConflictDoUpdate({
-                target: [repositories.url],
-                set: {
+        let repoResult = await db
+            .select()
+            .from(repositories)
+            .where(eq(repositories.url, url))
+            .limit(1);
+
+        if (repoResult.length === 0) {
+            const repoId = nanoid(16);
+            repoResult = await db
+                .insert(repositories)
+                .values({
+                    id: repoId,
+                    url,
+                    owner,
+                    name: repoName,
                     description: repoDetails.description,
                     readme: null,
                     stars: repoDetails.stars,
                     defaultBranch: repoDetails.defaultBranch,
                     lastFetched: now,
-                },
-            })
-            .returning();
+                    createdAt: now,
+                })
+                .returning();
+        } else {
+            await db
+                .update(repositories)
+                .set({
+                    description: repoDetails.description,
+                    readme: null,
+                    stars: repoDetails.stars,
+                    defaultBranch: repoDetails.defaultBranch,
+                    lastFetched: now,
+                })
+                .where(eq(repositories.url, url));
+        }
 
         if (!repoResult || repoResult.length === 0) {
             processLogger.error('Failed to get repository ID after insert/update');
@@ -112,8 +124,6 @@ export async function processRepoIngestion({
 
         processLogger.debug({ owner, repoName, maxCommits }, 'Fetching commits in pages');
 
-        // Process commits incrementally so large repositories become usable quickly.
-        const BATCH_SIZE = 50;
         const PER_PAGE = GITHUB.MAX_COMMITS_PER_REQUEST;
         let processedCommits = 0;
         let expectedCommits = maxCommits;
@@ -134,8 +144,8 @@ export async function processRepoIngestion({
                 latestCommitShas.push(...pageCommits.slice(0, 5).map((commit) => commit.sha));
             }
 
-            for (let i = 0; i < pageCommits.length; i += BATCH_SIZE) {
-                const batch = pageCommits.slice(i, i + BATCH_SIZE);
+            for (let i = 0; i < pageCommits.length; i += INGEST.COMMIT_BATCH_SIZE) {
+                const batch = pageCommits.slice(i, i + INGEST.COMMIT_BATCH_SIZE);
 
                 const dbCommits = batch.map((c, idx) => ({
                     repoId,
@@ -255,7 +265,7 @@ export async function processRepoIngestion({
                         const FILE_BATCH_SIZE = INGEST.FILE_BATCH_INSERT_SIZE;
                         for (let j = 0; j < filesToSave.length; j += FILE_BATCH_SIZE) {
                             const fileBatch = filesToSave.slice(j, j + FILE_BATCH_SIZE);
-                            await db.insert(files).values(fileBatch);
+                            await db.insert(files).values(fileBatch).onConflictDoNothing();
                         }
                     }
                 }

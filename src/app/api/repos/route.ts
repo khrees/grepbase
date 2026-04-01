@@ -102,6 +102,7 @@ export async function GET(request: NextRequest) {
 
         requestLogger.info({ sessionId: session.sessionId, count: repoList.length }, 'Repositories fetched');
 
+        const now = new Date().toISOString();
         return finalizeSessionResponse(
             session,
             NextResponse.json({
@@ -113,6 +114,10 @@ export async function GET(request: NextRequest) {
                     totalPages: Math.ceil(total / limit),
                     hasNext: offset + limit < total,
                     hasPrev: page > 1,
+                },
+                cache: {
+                    stale: false,
+                    lastFetched: now,
                 },
             })
         );
@@ -335,6 +340,14 @@ export async function POST(request: NextRequest) {
             updatedAt: now,
         });
         await safeGrantJobAccess(jobId, session.sessionId);
+
+        const newRepoResult = await db.select()
+            .from(repositories)
+            .where(eq(repositories.url, sanitizedUrl))
+            .limit(1);
+        if (newRepoResult.length > 0) {
+            await safeGrantRepoAccess(newRepoResult[0].id, session.sessionId);
+        }
 
         const ingestionPromise = processRepoIngestion({
             jobId,

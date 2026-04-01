@@ -3,13 +3,10 @@ import { and, eq } from 'drizzle-orm';
 import { repositories, commits, files } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS } from '@/lib/constants';
+import { RATE_LIMITS, COMMIT_SHA_REGEX, MAX_FILE_PATH_LENGTH } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchFileContent, getLanguageFromPath } from '@/services/github';
-
-const COMMIT_SHA_REGEX = /^[0-9a-f]{7,64}$/i;
-const MAX_FILE_PATH_LENGTH = 1024;
 
 function isSafeFilePath(path: string): boolean {
     if (path.length === 0 || path.length > MAX_FILE_PATH_LENGTH) return false;
@@ -41,12 +38,8 @@ export async function GET(
         }
 
         const { id, sha } = await params;
-        const repoId = Number.parseInt(id, 10);
+        const repoId = id;
         const filePath = request.nextUrl.searchParams.get('path')?.trim() || '';
-
-        if (Number.isNaN(repoId)) {
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
 
         if (!COMMIT_SHA_REGEX.test(sha)) {
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });

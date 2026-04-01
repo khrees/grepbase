@@ -6,7 +6,7 @@ import { Github, ArrowRight, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api-client';
 
 interface Repository {
-    id: number;
+    id: string;
 }
 
 export default function ClientHero({ styles }: { styles: Record<string, string> }) {
@@ -88,12 +88,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
             }>('/api/repos', { url });
 
             if (data.cached && data.repository) {
-                // Background job might be running due to explicit revalidation
-                if (data.jobId) {
-                    router.push(`/explore/${data.repository.id}?jobId=${data.jobId}`);
-                } else {
-                    router.push(`/explore/${data.repository.id}`);
-                }
+                router.push(`/explore/${data.repository.id}`);
                 return;
             }
 
@@ -114,12 +109,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
 
                     const resolvedRepoId = jobResponse.repository?.id ?? jobResponse.repoId ?? null;
                     if (resolvedRepoId) {
-                        const basePath = `/explore/${resolvedRepoId}`;
-                        if (jobResponse.status === 'completed') {
-                            router.push(basePath);
-                        } else {
-                            router.push(`${basePath}?jobId=${data.jobId}`);
-                        }
+                        router.push(`/explore/${resolvedRepoId}`);
                         return;
                     } else if (jobResponse.status === 'failed') {
                         throw new Error(jobResponse.error || 'Failed to fetch repository');

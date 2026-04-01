@@ -33,12 +33,7 @@ export async function GET(
         }
 
         const { id } = await params;
-        const repoId = parseInt(id, 10);
-
-        if (isNaN(repoId)) {
-            requestLogger.warn({ id }, 'Invalid repository ID');
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
+        const repoId = id;
 
         const repoAccess = await hasRepoAccess(repoId, session.sessionId);
         if (!repoAccess) {
@@ -86,6 +81,7 @@ export async function GET(
 
         requestLogger.info({ repoId, page, limit, total }, 'Commits fetched successfully');
 
+        const now = new Date().toISOString();
         return applyPrivateNoStoreHeaders(
             NextResponse.json({
                 repository: repo[0],
@@ -97,6 +93,10 @@ export async function GET(
                     totalPages: Math.ceil(total / limit),
                     hasNext: offset + limit < total,
                     hasPrev: page > 1,
+                },
+                cache: {
+                    stale: false,
+                    lastFetched: now,
                 },
             })
         );
