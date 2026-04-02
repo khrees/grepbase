@@ -33,7 +33,7 @@ function getChatStorageKey(repoId: number, commitSha: string): string {
 function restoreMessagesFromStorage(storageKey: string): Message[] {
     if (typeof window === 'undefined') return [];
 
-    const raw = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey);
+    const raw = sessionStorage.getItem(storageKey);
     if (!raw) return [];
 
     try {
@@ -300,7 +300,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
 
         const snapshot = JSON.stringify(messages.slice(-30));
         sessionStorage.setItem(chatStorageKey, snapshot);
-        localStorage.setItem(chatStorageKey, snapshot);
     }, [chatStorageKey, messages]);
 
     // Scroll to bottom on new messages

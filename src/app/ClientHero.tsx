@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Github, ArrowRight, Loader2, BookOpen } from 'lucide-react';
 import { api } from '@/lib/api-client';
+import { Logo } from '@/components/Logo';
 
 const RECENT_KEY = 'grepbase:recent_repos';
 
@@ -168,6 +169,9 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
     return (
         <section className={styles.hero}>
             <div className={styles.heroContent}>
+                <div className={styles.logoWrapper}>
+                    <Logo size={80} className={styles.heroLogo} />
+                </div>
                 <p className={styles.eyebrow}>AI-powered git history explorer</p>
 
                 <h1 className={styles.title}>

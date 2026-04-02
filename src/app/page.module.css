@@ -19,7 +19,13 @@
 }
 
 .logo {
-    display: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
 }
 
 .eyebrow {
@@ -98,6 +104,21 @@
     flex-direction: column;
     align-items: center;
     z-index: 1;
+}
+
+.logoWrapper {
+    margin-bottom: 2rem;
+    color: var(--accent-primary);
+    filter: drop-shadow(0 0 20px rgba(0, 112, 243, 0.3));
+    animation: fadeIn 0.8s ease-out;
+}
+
+.heroLogo {
+    transition: transform 0.3s ease;
+}
+
+.heroLogo:hover {
+    transform: scale(1.05);
 }
 
 .badge {

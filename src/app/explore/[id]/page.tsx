@@ -34,6 +34,8 @@ import {
     fetchInitialCommitsForRepository,
 } from '@/lib/commit-pagination';
 import Link from 'next/link';
+import { TOAST_EVENT_NAME } from '@/components/ToastHost';
+import { getAISettings } from '@/components/SettingsModal';
 import type {
     Repository,
     Commit,
@@ -45,6 +47,13 @@ import type {
 
 type CenterView = 'code' | 'diff' | 'story';
 type DiffScope = 'commit' | 'compare';
+
+const MAX_PREFETCH_PAGES = 10; // cap background prefetch at ~500 commits
+
+function fireToast(message: string, kind: 'success' | 'error' | 'info' = 'info', durationMs?: number) {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent(TOAST_EVENT_NAME, { detail: { message, kind, durationMs } }));
+}
 
 export default function ExplorePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
@@ -150,6 +159,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             let hasNext = true;
 
             while (hasNext && commitPrefetchRequestRef.current === requestId) {
+                if (page > startPage + MAX_PREFETCH_PAGES) break;
+
                 const pageData = await fetchCommitsPageForRepository(id, page);
                 if (commitPrefetchRequestRef.current !== requestId) {
                     return;
@@ -294,6 +305,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             } catch (pollError) {
                 if (!cancelled) {
                     console.error('Failed to poll ingest job:', pollError);
+                    fireToast('Lost connection to ingestion. Retrying\u2026', 'error', 4000);
                 }
             } finally {
                 inFlight = false;
@@ -328,6 +340,17 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             commitPrefetchRequestRef.current += 1;
         };
     }, []);
+
+    // Nudge user to configure AI on first explore load (once per session)
+    useEffect(() => {
+        if (loading) return;
+        if (typeof window === 'undefined') return;
+        const hintKey = 'grepbase:ai_hint_shown';
+        if (sessionStorage.getItem(hintKey)) return;
+        if (getAISettings()) return; // already configured
+        sessionStorage.setItem(hintKey, '1');
+        fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000);
+    }, [loading]);
 
     useEffect(() => {
         if (!currentCommit?.sha || typeof window === 'undefined') return;
@@ -473,17 +496,19 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         if (jobResponse.status === 'completed' || jobResponse.ready || hasProcessedCommits) {
                             await fetchRepositoryData(currentCommit?.sha, false);
                             setSyncing(false);
+                            fireToast('Repository synced', 'success');
                         } else if (jobResponse.status === 'failed') {
-                            console.error('Sync failed:', jobResponse.error);
+                            fireToast(jobResponse.error || 'Resync failed', 'error');
                             setSyncing(false);
                         } else if (attempts < maxAttempts) {
                             setTimeout(poll, 2000);
                         } else {
-                            console.error('Sync timed out');
+                            fireToast('Resync timed out. Try again.', 'error');
                             setSyncing(false);
                         }
                     } catch (pollError) {
                         console.error('Polling error:', pollError);
+                        fireToast('Resync failed. Check your connection.', 'error');
                         setSyncing(false);
                     }
                 };
@@ -494,7 +519,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 setSyncing(false);
             }
         } catch (err) {
-            console.error('Failed to trigger resync:', err);
+            const msg = err instanceof Error ? err.message : 'Failed to resync repository';
+            fireToast(msg, 'error');
             setSyncing(false);
         }
     }, [currentCommit?.sha, fetchRepositoryData, repository, syncing]);
@@ -715,7 +741,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         <span className={styles.chapterLabel}>
                             #{currentIndex + 1}{loadingMoreCommits ? '' : ` of ${commits.length}`}
                         </span>
-                        <span className={styles.chapterTitle}>{currentCommit.message.split('\n')[0]}</span>
+                        <span className={styles.chapterTitle}>{currentCommit?.message?.split('\n')[0] ?? ''}</span>
                         <ChevronDown size={12} className={styles.chapterChevron} />
                     </button>
                     <button
