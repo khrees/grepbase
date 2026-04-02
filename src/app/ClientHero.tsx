@@ -1,9 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Github, ArrowRight, Loader2 } from 'lucide-react';
+import { Github, ArrowRight, Loader2, BookOpen } from 'lucide-react';
 import { api } from '@/lib/api-client';
+
+const RECENT_KEY = 'grepbase:recent_repos';
+
+interface RecentRepo {
+    id: string;
+    owner: string;
+    name: string;
+    visitedAt: number;
+}
 
 interface Repository {
     id: string;
@@ -15,7 +24,25 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
     const [error, setError] = useState<string | null>(null);
     const [validationError, setValidationError] = useState<string | null>(null);
     const [isValid, setIsValid] = useState(false);
+    const [recentRepos, setRecentRepos] = useState<RecentRepo[]>([]);
     const router = useRouter();
+
+    useEffect(() => {
+        try {
+            const stored = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+            setRecentRepos(Array.isArray(stored) ? stored : []);
+        } catch { /* ignore */ }
+    }, []);
+
+    function saveRecentRepo(id: string, owner: string, name: string) {
+        try {
+            const existing: RecentRepo[] = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+            const filtered = existing.filter(r => r.id !== id);
+            const updated = [{ id, owner, name, visitedAt: Date.now() }, ...filtered].slice(0, 6);
+            localStorage.setItem(RECENT_KEY, JSON.stringify(updated));
+            setRecentRepos(updated);
+        } catch { /* ignore */ }
+    }
 
     function validateRepoUrl(input: string): { valid: boolean; error: string | null } {
         const trimmed = input.trim();
@@ -88,6 +115,8 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
             }>('/api/repos', { url });
 
             if (data.cached && data.repository) {
+                const parts = url.trim().replace(/^(https?:\/\/)?(www\.)?github\.com\//i, '').replace(/\.git\/?$/, '').split('/').filter(Boolean);
+                if (parts.length >= 2) saveRecentRepo(data.repository.id, parts[0], parts[1]);
                 router.push(`/explore/${data.repository.id}`);
                 return;
             }
@@ -109,6 +138,8 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
 
                     const resolvedRepoId = jobResponse.repository?.id ?? jobResponse.repoId ?? null;
                     if (resolvedRepoId) {
+                        const parts = url.trim().replace(/^(https?:\/\/)?(www\.)?github\.com\//i, '').replace(/\.git\/?$/, '').split('/').filter(Boolean);
+                        if (parts.length >= 2) saveRecentRepo(String(resolvedRepoId), parts[0], parts[1]);
                         router.push(`/explore/${resolvedRepoId}`);
                         return;
                     } else if (jobResponse.status === 'failed') {
@@ -137,12 +168,14 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
     return (
         <section className={styles.hero}>
             <div className={styles.heroContent}>
+                <p className={styles.eyebrow}>AI-powered git history explorer</p>
+
                 <h1 className={styles.title}>
                     Grepbase
                 </h1>
 
                 <p className={styles.subtitle}>
-                    Understand code history with AI-powered explanations.
+                    Paste a GitHub repo. Walk every commit. Understand what changed and why — with AI.
                 </p>
 
                 <form onSubmit={handleSubmit} className={styles.searchForm}>
@@ -184,6 +217,20 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
                 </form>
 
                 {error && <div className={styles.error}>{error}</div>}
+
+                {recentRepos.length > 0 && (
+                    <div className={styles.recentSection}>
+                        <p className={styles.recentLabel}>Recent</p>
+                        <div className={styles.recentGrid}>
+                            {recentRepos.map(repo => (
+                                <a key={repo.id} href={`/explore/${repo.id}`} className={styles.recentCard}>
+                                    <BookOpen size={12} />
+                                    <span>{repo.owner}/{repo.name}</span>
+                                </a>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
         </section>
     );

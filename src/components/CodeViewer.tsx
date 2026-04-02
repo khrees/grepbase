@@ -141,12 +141,15 @@ export default memo(function CodeViewer({ code, language, filename }: CodeViewer
                                             {lineIndex + 1}
                                         </span>
                                         <span className={styles.lineContent}>
-                                            {line.map((token, tokenIndex) => (
-                                                <span
-                                                    key={`token-${lineIndex}-${tokenIndex}`}
-                                                    {...getTokenProps({ token, key: tokenIndex })}
-                                                />
-                                            ))}
+                                            {line.map((token, tokenIndex) => {
+                                                const { key: _key, ...tokenProps } = getTokenProps({ token });
+                                                return (
+                                                    <span
+                                                        key={`token-${lineIndex}-${tokenIndex}`}
+                                                        {...tokenProps}
+                                                    />
+                                                );
+                                            })}
                                         </span>
                                     </div>
                                 ))}

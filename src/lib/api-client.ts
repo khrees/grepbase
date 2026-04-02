@@ -29,6 +29,7 @@ export class APIClient {
 
     const response = await fetch(url, {
       ...options,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
@@ -93,6 +94,7 @@ export class APIClient {
 
     const response = await fetch(url, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         [CSRF_HEADER_NAME]: CSRF_HEADER_VALUE,

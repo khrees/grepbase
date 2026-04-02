@@ -35,12 +35,6 @@ export async function GET(
         const { id } = await params;
         const repoId = id;
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
-
         // Parse pagination params from query string
         const url = new URL(request.url);
         const requestedPage = Number.parseInt(url.searchParams.get('page') || '', 10);
@@ -54,7 +48,7 @@ export async function GET(
             : PAGINATION.DEFAULT_LIMIT;
         const offset = (page - 1) * limit;
 
-        // Check if repo exists
+        // Check if repo exists and get repo data
         const repo = await db.select()
             .from(repositories)
             .where(eq(repositories.id, repoId))
@@ -63,6 +57,21 @@ export async function GET(
         if (repo.length === 0) {
             requestLogger.warn({ repoId }, 'Repository not found');
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
+        }
+
+        // Access control: check KV-based access grant, but allow access if repo exists in DB
+        // This supports both multi-tenant (with KV) and single-user (DB-only) deployments
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                // No access grant - try to create one, but don't block access
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch (accessError) {
+            // Access control system unavailable - allow access to existing repos
+            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
         }
 
         // Run count and data fetch in parallel

@@ -9,7 +9,6 @@ import {
     Home,
     Settings,
     Loader2,
-    MessageSquare,
     GitCommit,
     User,
     Calendar,
@@ -17,6 +16,7 @@ import {
     Minimize2,
     ChevronDown,
     RefreshCw,
+    Sparkles,
 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import styles from './explore.module.css';
@@ -25,6 +25,7 @@ import CodeViewer from '@/components/CodeViewer';
 import AIPanel from '@/components/AIPanel';
 import FileTree from '@/components/FileTree';
 import CommitHistoryModal from '@/components/CommitHistoryModal';
+import CommitTimeline from '@/components/CommitTimeline';
 import DiffViewer from '@/components/DiffViewer';
 import StoryModePanel from '@/components/StoryModePanel';
 import { api } from '@/lib/api-client';
@@ -42,7 +43,8 @@ import type {
     DiffFileData,
 } from '@/types';
 
-type CenterView = 'code' | 'commit-diff' | 'file-diff' | 'story';
+type CenterView = 'code' | 'diff' | 'story';
+type DiffScope = 'commit' | 'compare';
 
 export default function ExplorePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
@@ -59,7 +61,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const [loadingFiles, setLoadingFiles] = useState(false);
     const [loadingContent, setLoadingContent] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
-    const [showAIPanel, setShowAIPanel] = useState(true);
+    const [aiPanelExpanded, setAiPanelExpanded] = useState(true);
+    const [sidebarTab, setSidebarTab] = useState<'commits' | 'files'>('files');
+    const [commitOrder, setCommitOrder] = useState<'asc' | 'desc'>('asc');
+    const [diffScope, setDiffScope] = useState<DiffScope>('commit');
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [focusMode, setFocusMode] = useState(false);
     const [syncing, setSyncing] = useState(false);
@@ -108,6 +113,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         if (commitDiffFiles.length === 0) return null;
         return commitDiffFiles.find(file => file.path === selectedCommitDiffPath) || commitDiffFiles[0];
     }, [commitDiffFiles, selectedCommitDiffPath]);
+
+    const orderedCommits = useMemo(
+        () => commitOrder === 'asc' ? commits : [...commits].reverse(),
+        [commits, commitOrder]
+    );
 
     const selectedCompareFile = useMemo(() => {
         if (compareFiles.length === 0) return null;
@@ -519,10 +529,14 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     useEffect(() => {
         function handleKeyDown(event: KeyboardEvent) {
             if (showSettings || showHistoryModal) return;
+            const tag = (event.target as HTMLElement).tagName;
+            const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+                || (event.target as HTMLElement).isContentEditable;
+            if (isEditable) return;
 
-            if (event.key === 'ArrowRight' && event.metaKey) {
+            if (event.key === 'ArrowRight') {
                 goNext();
-            } else if (event.key === 'ArrowLeft' && event.metaKey) {
+            } else if (event.key === 'ArrowLeft') {
                 goPrev();
             }
         }
@@ -533,7 +547,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
     useEffect(() => {
         if (!currentCommit?.sha) return;
-        if (centerView !== 'commit-diff') return;
+        if (centerView !== 'diff' || diffScope !== 'commit') return;
 
         let cancelled = false;
 
@@ -583,7 +597,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     }, [commits, currentIndex]);
 
     useEffect(() => {
-        if (centerView !== 'file-diff') return;
+        if (centerView !== 'diff' || diffScope !== 'compare') return;
         if (!compareBaseSha || !compareHeadSha) return;
 
         let cancelled = false;
@@ -675,62 +689,65 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
     return (
         <div className={styles.container}>
-            <header className={`${styles.header} ${focusMode ? styles.headerCompact : ''}`}>
+            <header className={styles.header}>
                 <div className={styles.headerLeft}>
-                    <Link href="/" className="btn btn-ghost">
-                        <Home size={18} />
+                    <Link href="/" className={`btn btn-ghost ${styles.headerHomeBtn}`}>
+                        <Home size={16} />
                     </Link>
                     <div className={styles.repoInfo}>
-                        <BookOpen size={18} />
+                        <BookOpen size={14} className={styles.repoIcon} />
                         <span className={styles.repoName}>
-                            {repository.owner}/{repository.name}
+                            {repository.owner}<span className={styles.repoSlash}>/</span>{repository.name}
                         </span>
                     </div>
                 </div>
 
                 <div className={styles.headerCenter}>
+                    <button
+                        className={styles.navArrow}
+                        onClick={goPrev}
+                        disabled={currentIndex === 0}
+                        title="Previous commit (←)"
+                    >
+                        <ChevronLeft size={14} />
+                    </button>
                     <button className={styles.chapterTrigger} onClick={() => setShowHistoryModal(true)}>
-                        <div className={styles.chapterInfo}>
-                            <span className={styles.chapterLabel}>
-                                Chapter {currentIndex + 1} of {commits.length}
-                                {loadingMoreCommits ? ' (loading more...)' : ''}
-                            </span>
-                            <span className={styles.chapterTitle}>{currentCommit.message.split('\n')[0]}</span>
-                        </div>
-                        <ChevronDown size={16} className={styles.chapterChevron} />
+                        <span className={styles.chapterLabel}>
+                            #{currentIndex + 1}{loadingMoreCommits ? '' : ` of ${commits.length}`}
+                        </span>
+                        <span className={styles.chapterTitle}>{currentCommit.message.split('\n')[0]}</span>
+                        <ChevronDown size={12} className={styles.chapterChevron} />
+                    </button>
+                    <button
+                        className={styles.navArrow}
+                        onClick={goNext}
+                        disabled={currentIndex === commits.length - 1}
+                        title="Next commit (→)"
+                    >
+                        <ChevronRight size={14} />
                     </button>
                 </div>
 
                 <div className={styles.headerRight}>
                     <button
-                        className={`btn btn-ghost ${syncing ? styles.active : ''}`}
+                        className={`btn btn-ghost ${styles.headerBtn} ${syncing ? styles.active : ''}`}
                         onClick={handleResync}
                         disabled={syncing}
                         title="Resync Repository"
                     >
-                        {syncing ? <Loader2 size={18} className={styles.spinner} /> : <RefreshCw size={18} />}
+                        {syncing ? <Loader2 size={15} className={styles.spinner} /> : <RefreshCw size={15} />}
                     </button>
 
                     <button
-                        className={`btn btn-ghost ${focusMode ? styles.active : ''}`}
+                        className={`btn btn-ghost ${styles.headerBtn} ${focusMode ? styles.active : ''}`}
                         onClick={() => setFocusMode(!focusMode)}
                         title="Focus Mode"
                     >
-                        {focusMode ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                        {focusMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
                     </button>
 
-                    {!focusMode && (
-                        <button
-                            className={`btn btn-ghost ${showAIPanel ? styles.active : ''}`}
-                            onClick={() => setShowAIPanel(!showAIPanel)}
-                        >
-                            <MessageSquare size={18} />
-                            AI
-                        </button>
-                    )}
-
-                    <button className="btn btn-ghost" onClick={() => setShowSettings(true)}>
-                        <Settings size={18} />
+                    <button className={`btn btn-ghost ${styles.headerBtn}`} onClick={() => setShowSettings(true)} title="Settings">
+                        <Settings size={15} />
                     </button>
                 </div>
             </header>
@@ -738,12 +755,45 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             <div className={styles.main}>
                 <PanelGroup direction="horizontal" className={styles.group}>
                     {!focusMode && (
-                        <Panel defaultSize={20} minSize={15} maxSize={30} className={styles.panel} id="files">
-                            <div className={styles.panelHeader}>
-                                <h3 className={styles.panelTitle}>Files</h3>
+                        <Panel defaultSize={18} minSize={14} maxSize={28} className={styles.panel} id="left">
+                            <div className={styles.sidebarTabStrip}>
+                                <button
+                                    className={`${styles.sidebarTabBtn} ${sidebarTab === 'commits' ? styles.sidebarTabActive : ''}`}
+                                    onClick={() => setSidebarTab('commits')}
+                                >
+                                    Commits
+                                </button>
+                                <button
+                                    className={`${styles.sidebarTabBtn} ${sidebarTab === 'files' ? styles.sidebarTabActive : ''}`}
+                                    onClick={() => setSidebarTab('files')}
+                                >
+                                    Files
+                                </button>
                             </div>
-                            <div className={styles.fileList}>
-                                {loadingFiles ? (
+                            {sidebarTab === 'commits' && (
+                                <div className={styles.commitSortBar}>
+                                    <button
+                                        className={`${styles.commitSortBtn} ${commitOrder === 'asc' ? styles.commitSortActive : ''}`}
+                                        onClick={() => { setCommitOrder('asc'); setCurrentIndex(0); }}
+                                    >
+                                        ↑ Oldest
+                                    </button>
+                                    <button
+                                        className={`${styles.commitSortBtn} ${commitOrder === 'desc' ? styles.commitSortActive : ''}`}
+                                        onClick={() => { setCommitOrder('desc'); setCurrentIndex(commits.length - 1); }}
+                                    >
+                                        ↓ Newest
+                                    </button>
+                                </div>
+                            )}
+                            <div className={styles.sidebarContent}>
+                                {sidebarTab === 'commits' ? (
+                                    <CommitTimeline
+                                        commits={orderedCommits}
+                                        currentIndex={commitOrder === 'asc' ? currentIndex : commits.length - 1 - currentIndex}
+                                        onSelect={(displayIdx) => goToCommit(commitOrder === 'asc' ? displayIdx : commits.length - 1 - displayIdx)}
+                                    />
+                                ) : loadingFiles ? (
                                     <div className={styles.loadingFiles}>
                                         <Loader2 size={24} className={styles.spinner} />
                                     </div>
@@ -755,27 +805,34 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     />
                                 )}
                             </div>
+                            <div className={styles.sidebarFooter}>
+                                <button
+                                    className={styles.sidebarFooterBtn}
+                                    onClick={() => setShowHistoryModal(true)}
+                                >
+                                    <Calendar size={13} />
+                                    Calendar
+                                </button>
+                            </div>
                         </Panel>
                     )}
 
                     {!focusMode && <PanelResizeHandle className={styles.resizeHandle} />}
 
                     <Panel defaultSize={60} minSize={30} className={styles.panel} id="code">
-                        <div className={styles.commitInfo}>
-                            <div className={styles.commitMeta}>
-                                <div className={styles.commitSha}>
-                                    <GitCommit size={14} />
-                                    <code>{currentCommit.sha.substring(0, 7)}</code>
-                                </div>
-                                <span className={styles.commitAuthor}>
-                                    <User size={14} />
-                                    {currentCommit.authorName || 'Unknown'}
-                                </span>
-                                <span className={styles.commitDate}>
-                                    <Calendar size={14} />
-                                    {new Date(currentCommit.date).toLocaleDateString()}
-                                </span>
+                        <div className={styles.commitStrip}>
+                            <div className={styles.commitSha}>
+                                <GitCommit size={12} />
+                                <code>{currentCommit.sha.substring(0, 7)}</code>
                             </div>
+                            <span className={styles.commitAuthor}>
+                                <User size={12} />
+                                {currentCommit.authorName || 'Unknown'}
+                            </span>
+                            <span className={styles.commitDate}>
+                                <Calendar size={12} />
+                                {new Date(currentCommit.date).toLocaleDateString()}
+                            </span>
                         </div>
 
                         <div className={styles.viewTabs}>
@@ -786,22 +843,16 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                 Code
                             </button>
                             <button
-                                className={`${styles.viewTab} ${centerView === 'commit-diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('commit-diff')}
+                                className={`${styles.viewTab} ${centerView === 'diff' ? styles.viewTabActive : ''}`}
+                                onClick={() => setCenterView('diff')}
                             >
-                                Commit Diff
-                            </button>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'file-diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('file-diff')}
-                            >
-                                File Diff
+                                Diff
                             </button>
                             <button
                                 className={`${styles.viewTab} ${centerView === 'story' ? styles.viewTabActive : ''}`}
                                 onClick={() => setCenterView('story')}
                             >
-                                Story Mode
+                                Story
                             </button>
                         </div>
 
@@ -830,169 +881,161 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     )
                                 )}
 
-                                {centerView === 'commit-diff' && (
+                                {centerView === 'diff' && (
                                     <div className={styles.diffContainer}>
                                         <div className={styles.diffToolbar}>
-                                            <div className={styles.diffStats}>
-                                                <span>{commitDiffFiles.length} changed file{commitDiffFiles.length === 1 ? '' : 's'}</span>
-                                            </div>
-                                            <div className={styles.diffToolbarControls}>
-                                                <select
-                                                    value={selectedCommitDiffPath}
-                                                    onChange={event => setSelectedCommitDiffPath(event.target.value)}
-                                                    disabled={commitDiffFiles.length === 0}
+                                            <div className={styles.diffScopeToggle}>
+                                                <button
+                                                    className={`${styles.diffScopeBtn} ${diffScope === 'commit' ? styles.diffScopeBtnActive : ''}`}
+                                                    onClick={() => setDiffScope('commit')}
                                                 >
-                                                    {commitDiffFiles.length === 0 && <option value="">No changed files</option>}
-                                                    {commitDiffFiles.map(file => (
-                                                        <option key={file.path} value={file.path}>
-                                                            {file.path}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <div className={styles.diffModeToggle}>
-                                                    <button
-                                                        className={diffViewMode === 'unified' ? styles.diffModeActive : ''}
-                                                        onClick={() => setDiffViewMode('unified')}
-                                                    >
-                                                        Unified
-                                                    </button>
-                                                    <button
-                                                        className={diffViewMode === 'split' ? styles.diffModeActive : ''}
-                                                        onClick={() => setDiffViewMode('split')}
-                                                    >
-                                                        Split
-                                                    </button>
-                                                </div>
+                                                    This commit
+                                                </button>
+                                                <button
+                                                    className={`${styles.diffScopeBtn} ${diffScope === 'compare' ? styles.diffScopeBtnActive : ''}`}
+                                                    onClick={() => setDiffScope('compare')}
+                                                >
+                                                    Compare
+                                                </button>
                                             </div>
-                                        </div>
 
-                                        {commitDiffLoading ? (
-                                            <div className={styles.loadingFiles}>
-                                                <Loader2 size={24} className={styles.spinner} />
-                                                <p>Loading commit diff...</p>
-                                            </div>
-                                        ) : commitDiffError ? (
-                                            <div className={styles.errorInline}>{commitDiffError}</div>
-                                        ) : selectedCommitDiffFile ? (
-                                            <>
-                                                <div className={styles.diffMeta}>
-                                                    <span>{selectedCommitDiffFile.status}</span>
-                                                    <span>+{selectedCommitDiffFile.additions}</span>
-                                                    <span>-{selectedCommitDiffFile.deletions}</span>
-                                                </div>
-                                                <DiffViewer
-                                                    patch={selectedCommitDiffFile.patch}
-                                                    mode={diffViewMode}
-                                                />
-                                            </>
-                                        ) : (
-                                            <div className={styles.noFile}>
-                                                <h3>No diff available</h3>
-                                                <p>This commit has no textual file changes.</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {centerView === 'file-diff' && (
-                                    <div className={styles.diffContainer}>
-                                        <div className={styles.diffToolbar}>
-                                            <div className={styles.diffToolbarControlsWide}>
-                                                <label>
-                                                    Base
+                                            {diffScope === 'commit' ? (
+                                                <div className={styles.diffToolbarControls}>
                                                     <select
-                                                        value={compareBaseSha}
-                                                        onChange={event => setCompareBaseSha(event.target.value)}
+                                                        value={selectedCommitDiffPath}
+                                                        onChange={event => setSelectedCommitDiffPath(event.target.value)}
+                                                        disabled={commitDiffFiles.length === 0}
                                                     >
-                                                        {commits.map((commit, index) => (
-                                                            <option key={`base-${commit.sha}`} value={commit.sha}>
-                                                                {index + 1}. {commit.sha.slice(0, 7)} - {commit.message.split('\n')[0]}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                                <label>
-                                                    Head
-                                                    <select
-                                                        value={compareHeadSha}
-                                                        onChange={event => setCompareHeadSha(event.target.value)}
-                                                    >
-                                                        {commits.map((commit, index) => (
-                                                            <option key={`head-${commit.sha}`} value={commit.sha}>
-                                                                {index + 1}. {commit.sha.slice(0, 7)} - {commit.message.split('\n')[0]}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                                <label>
-                                                    File
-                                                    <select
-                                                        value={selectedComparePath}
-                                                        onChange={event => setSelectedComparePath(event.target.value)}
-                                                        disabled={compareFiles.length === 0}
-                                                    >
-                                                        {compareFiles.length === 0 && <option value="">No changed files</option>}
-                                                        {compareFiles.map(file => (
+                                                        {commitDiffFiles.length === 0 && <option value="">No changed files</option>}
+                                                        {commitDiffFiles.map(file => (
                                                             <option key={file.path} value={file.path}>
                                                                 {file.path}
                                                             </option>
                                                         ))}
                                                     </select>
-                                                </label>
-                                                <div className={styles.diffModeToggle}>
-                                                    <button
-                                                        className={diffViewMode === 'unified' ? styles.diffModeActive : ''}
-                                                        onClick={() => setDiffViewMode('unified')}
-                                                    >
-                                                        Unified
-                                                    </button>
-                                                    <button
-                                                        className={diffViewMode === 'split' ? styles.diffModeActive : ''}
-                                                        onClick={() => setDiffViewMode('split')}
-                                                    >
-                                                        Split
-                                                    </button>
+                                                    <span className={styles.diffStats}>
+                                                        {commitDiffFiles.length} file{commitDiffFiles.length === 1 ? '' : 's'}
+                                                    </span>
                                                 </div>
+                                            ) : (
+                                                <div className={styles.diffToolbarControls}>
+                                                    <label className={styles.diffSelectLabel}>
+                                                        Base
+                                                        <select value={compareBaseSha} onChange={event => setCompareBaseSha(event.target.value)}>
+                                                            {commits.map((commit, index) => (
+                                                                <option key={`base-${commit.sha}`} value={commit.sha}>
+                                                                    {index + 1}. {commit.sha.slice(0, 7)} — {commit.message.split('\n')[0].slice(0, 40)}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </label>
+                                                    <label className={styles.diffSelectLabel}>
+                                                        Head
+                                                        <select value={compareHeadSha} onChange={event => setCompareHeadSha(event.target.value)}>
+                                                            {commits.map((commit, index) => (
+                                                                <option key={`head-${commit.sha}`} value={commit.sha}>
+                                                                    {index + 1}. {commit.sha.slice(0, 7)} — {commit.message.split('\n')[0].slice(0, 40)}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </label>
+                                                    <label className={styles.diffSelectLabel}>
+                                                        File
+                                                        <select
+                                                            value={selectedComparePath}
+                                                            onChange={event => setSelectedComparePath(event.target.value)}
+                                                            disabled={compareFiles.length === 0}
+                                                        >
+                                                            {compareFiles.length === 0 && <option value="">No changed files</option>}
+                                                            {compareFiles.map(file => (
+                                                                <option key={file.path} value={file.path}>{file.path}</option>
+                                                            ))}
+                                                        </select>
+                                                    </label>
+                                                </div>
+                                            )}
+
+                                            <div className={styles.diffModeToggle}>
+                                                <button
+                                                    className={diffViewMode === 'unified' ? styles.diffModeActive : ''}
+                                                    onClick={() => setDiffViewMode('unified')}
+                                                >
+                                                    Unified
+                                                </button>
+                                                <button
+                                                    className={diffViewMode === 'split' ? styles.diffModeActive : ''}
+                                                    onClick={() => setDiffViewMode('split')}
+                                                >
+                                                    Split
+                                                </button>
                                             </div>
                                         </div>
 
-                                        <div className={styles.compareSummary}>
-                                            <span>Status: {compareStatus}</span>
-                                            <span>Files changed: {compareTotalFiles}</span>
-                                            <span>Ahead: {compareAheadBy}</span>
-                                            <span>Behind: {compareBehindBy}</span>
-                                        </div>
-
-                                        {compareLoading ? (
-                                            <div className={styles.loadingFiles}>
-                                                <Loader2 size={24} className={styles.spinner} />
-                                                <p>Comparing commits...</p>
-                                            </div>
-                                        ) : compareError ? (
-                                            <div className={styles.errorInline}>{compareError}</div>
-                                        ) : compareBaseSha === compareHeadSha ? (
-                                            <div className={styles.noFile}>
-                                                <h3>Same commit selected</h3>
-                                                <p>Select two different commits to compare file history.</p>
-                                            </div>
-                                        ) : selectedCompareFile ? (
-                                            <>
-                                                <div className={styles.diffMeta}>
-                                                    <span>{selectedCompareFile.status}</span>
-                                                    <span>+{selectedCompareFile.additions}</span>
-                                                    <span>-{selectedCompareFile.deletions}</span>
+                                        {diffScope === 'commit' ? (
+                                            commitDiffLoading ? (
+                                                <div className={styles.loadingFiles}>
+                                                    <Loader2 size={24} className={styles.spinner} />
+                                                    <p>Loading diff...</p>
                                                 </div>
-                                                <DiffViewer
-                                                    patch={selectedCompareFile.patch}
-                                                    mode={diffViewMode}
-                                                    emptyMessage="This file did not change textually between the selected commits."
-                                                />
-                                            </>
+                                            ) : commitDiffError ? (
+                                                <div className={styles.errorInline}>{commitDiffError}</div>
+                                            ) : selectedCommitDiffFile ? (
+                                                <>
+                                                    <div className={styles.diffMeta}>
+                                                        <span>{selectedCommitDiffFile.status}</span>
+                                                        <span className={styles.diffAdd}>+{selectedCommitDiffFile.additions}</span>
+                                                        <span className={styles.diffDel}>-{selectedCommitDiffFile.deletions}</span>
+                                                    </div>
+                                                    <DiffViewer patch={selectedCommitDiffFile.patch} mode={diffViewMode} />
+                                                </>
+                                            ) : (
+                                                <div className={styles.noFile}>
+                                                    <h3>No diff available</h3>
+                                                    <p>This commit has no textual file changes.</p>
+                                                </div>
+                                            )
                                         ) : (
-                                            <div className={styles.noFile}>
-                                                <h3>No changed files in this range</h3>
-                                                <p>Try a different commit pair to inspect file changes.</p>
-                                            </div>
+                                            <>
+                                                {compareStatus !== 'unknown' && (
+                                                    <div className={styles.compareSummary}>
+                                                        <span>{compareStatus}</span>
+                                                        <span>{compareTotalFiles} files</span>
+                                                        <span>+{compareAheadBy}</span>
+                                                        <span>-{compareBehindBy}</span>
+                                                    </div>
+                                                )}
+                                                {compareLoading ? (
+                                                    <div className={styles.loadingFiles}>
+                                                        <Loader2 size={24} className={styles.spinner} />
+                                                        <p>Comparing commits...</p>
+                                                    </div>
+                                                ) : compareError ? (
+                                                    <div className={styles.errorInline}>{compareError}</div>
+                                                ) : compareBaseSha === compareHeadSha ? (
+                                                    <div className={styles.noFile}>
+                                                        <h3>Same commit selected</h3>
+                                                        <p>Select two different commits to compare.</p>
+                                                    </div>
+                                                ) : selectedCompareFile ? (
+                                                    <>
+                                                        <div className={styles.diffMeta}>
+                                                            <span>{selectedCompareFile.status}</span>
+                                                            <span className={styles.diffAdd}>+{selectedCompareFile.additions}</span>
+                                                            <span className={styles.diffDel}>-{selectedCompareFile.deletions}</span>
+                                                        </div>
+                                                        <DiffViewer
+                                                            patch={selectedCompareFile.patch}
+                                                            mode={diffViewMode}
+                                                            emptyMessage="This file did not change textually between the selected commits."
+                                                        />
+                                                    </>
+                                                ) : (
+                                                    <div className={styles.noFile}>
+                                                        <h3>No changed files in this range</h3>
+                                                        <p>Try a different commit pair.</p>
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 )}
@@ -1007,44 +1050,44 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                             </div>
                         </div>
 
-                        <div className={styles.navigation}>
-                            <button
-                                className="btn btn-secondary"
-                                onClick={goPrev}
-                                disabled={currentIndex === 0}
-                            >
-                                <ChevronLeft size={18} />
-                                Previous
-                            </button>
-                            <span className={styles.navInfo}>
-                                {currentIndex + 1} / {commits.length}
-                            </span>
-                            <button
-                                className="btn btn-primary"
-                                onClick={goNext}
-                                disabled={currentIndex === commits.length - 1}
-                            >
-                                Next
-                                <ChevronRight size={18} />
-                            </button>
-                        </div>
                     </Panel>
 
-                    {!focusMode && showAIPanel && <PanelResizeHandle className={styles.resizeHandle} />}
-                    {!focusMode && showAIPanel && (
-                        <Panel defaultSize={20} minSize={20} maxSize={40} className={styles.panel} id="ai">
-                            <div className={styles.panelHeader}>
-                                <h3 className={styles.panelTitle}>AI Analysis</h3>
-                            </div>
-                            <div className={styles.aiPanelWrapper}>
-                                <AIPanel
-                                    repository={repository}
-                                    commit={currentCommit}
-                                    totalCommits={commits.length}
-                                    currentIndex={currentIndex}
-                                    onOpenFile={openFileFromAIReference}
-                                    visibleFilePaths={visibleFilePaths}
-                                />
+                    {!focusMode && <PanelResizeHandle className={styles.resizeHandle} />}
+                    {!focusMode && (
+                        <Panel
+                            defaultSize={aiPanelExpanded ? 22 : 2}
+                            minSize={aiPanelExpanded ? 16 : 2}
+                            maxSize={aiPanelExpanded ? 40 : 2}
+                            className={styles.panel}
+                            id="ai"
+                        >
+                            <div className={`${styles.aiPanelInner} ${!aiPanelExpanded ? styles.aiPanelCollapsed : ''}`}>
+                                <button
+                                    className={styles.aiCollapseBtn}
+                                    onClick={() => setAiPanelExpanded(v => !v)}
+                                    title={aiPanelExpanded ? 'Collapse AI' : 'Expand AI'}
+                                >
+                                    {aiPanelExpanded ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
+                                </button>
+                                {aiPanelExpanded ? (
+                                    <>
+                                        <div className={styles.panelHeader}>
+                                            <h3 className={styles.panelTitle}>AI Analysis</h3>
+                                        </div>
+                                        <div className={styles.aiPanelWrapper}>
+                                            <AIPanel
+                                                repository={repository}
+                                                commit={currentCommit}
+                                                totalCommits={commits.length}
+                                                currentIndex={currentIndex}
+                                                onOpenFile={openFileFromAIReference}
+                                                visibleFilePaths={visibleFilePaths}
+                                            />
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className={styles.aiCollapsedLabel}>AI</div>
+                                )}
                             </div>
                         </Panel>
                     )}
