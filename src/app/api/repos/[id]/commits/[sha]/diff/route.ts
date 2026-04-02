@@ -43,18 +43,13 @@ export async function GET(
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
-        const repo = await db.select()
-            .from(repositories)
-            .where(eq(repositories.id, repoId))
-            .limit(1);
+        const [repo, commit] = await Promise.all([
+            db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1),
+            db.select().from(commits).where(and(eq(commits.repoId, repoId), eq(commits.sha, sha))).limit(1),
+        ]);
         if (repo.length === 0) {
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
-
-        const commit = await db.select()
-            .from(commits)
-            .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
-            .limit(1);
         if (commit.length === 0) {
             return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
         }

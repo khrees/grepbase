@@ -92,6 +92,7 @@ export const RESOURCE_ACCESS = {
 export const JOB_RETRY = {
     STUCK_JOB_THRESHOLD_MS: 15 * 60 * 1000, // 15 minutes
     BATCH_SIZE: 10,
+    MAX_RETRIES: 3,
 } as const;
 
 // File extensions recognized as source code (for content fetching/display)

@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { repositories, commits, files, ingestJobs } from '@/db/schema';
 import {
     fetchRepository,
+    fetchReadme,
     fetchCommitHistoryPage,
     fetchFilesAtCommit,
     getLanguageFromPath,
@@ -11,12 +12,16 @@ import { logger } from '@/lib/logger';
 import type { Database } from '@/db/index';
 import { GITHUB, INGEST } from '@/lib/constants';
 import { safeGrantRepoAccess } from './resource-access';
+import { parseGitHubUrl } from '@/lib/sanitize';
 
 interface IngestOptions {
     jobId: string;
     url: string;
     clientId: string;
     db: Database;
+    /** Pre-parsed owner/repo — avoids re-parsing the URL inside the worker */
+    owner?: string;
+    repoName?: string;
 }
 
 export async function processRepoIngestion({
@@ -24,6 +29,8 @@ export async function processRepoIngestion({
     url,
     clientId,
     db,
+    owner: ownerArg,
+    repoName: repoNameArg,
 }: IngestOptions): Promise<void> {
     const processLogger = logger.child({ jobId, url, clientId, worker: true });
 
@@ -39,23 +46,25 @@ export async function processRepoIngestion({
             })
             .where(eq(ingestJobs.jobId, jobId));
 
-        // 2. Extract owner/repo
-        let normalized = url
-            .replace(/^(https?:\/\/)?(www\.)?/i, '')
-            .replace(/\.git\/?$/, '')
-            .replace(/\/+$/, '');
-
-        if (normalized.toLowerCase().startsWith('github.com/')) {
-            normalized = normalized.substring('github.com/'.length);
+        // 2. Resolve owner/repo — use pre-parsed values when available to avoid
+        //    duplicating sanitize logic; fall back to parsing the URL for retry paths.
+        let owner: string;
+        let repoName: string;
+        if (ownerArg && repoNameArg) {
+            owner = ownerArg;
+            repoName = repoNameArg;
+        } else {
+            const parsed = parseGitHubUrl(url);
+            owner = parsed.owner;
+            repoName = parsed.repo;
         }
 
-        const parts = normalized.split('/').filter(Boolean);
-        const owner = parts[0];
-        const repoName = parts[1];
-
-        // 3. Fetch repo details
+        // 3. Fetch repo details and README in parallel
         processLogger.debug({ owner, repoName }, 'Fetching repository details');
-        const repoDetails = await fetchRepository(owner, repoName);
+        const [repoDetails, readme] = await Promise.all([
+            fetchRepository(owner, repoName),
+            fetchReadme(owner, repoName),
+        ]);
 
         // 4. Save/update repository in DB
         const now = new Date();
@@ -79,7 +88,7 @@ export async function processRepoIngestion({
                     owner,
                     name: repoName,
                     description: repoDetails.description,
-                    readme: null,
+                    readme,
                     stars: repoDetails.stars,
                     defaultBranch: repoDetails.defaultBranch,
                     lastFetched: now,
@@ -91,7 +100,7 @@ export async function processRepoIngestion({
                 .update(repositories)
                 .set({
                     description: repoDetails.description,
-                    readme: null,
+                    readme,
                     stars: repoDetails.stars,
                     defaultBranch: repoDetails.defaultBranch,
                     lastFetched: now,
@@ -159,35 +168,19 @@ export async function processRepoIngestion({
                 }));
 
                 // Persist each batch in one statement to reduce round-trip overhead.
-                try {
-                    await db
-                        .insert(commits)
-                        .values(dbCommits)
-                        .onConflictDoUpdate({
-                            target: [commits.repoId, commits.sha],
-                            set: {
-                                message: sql`excluded.message`,
-                                authorName: sql`excluded.author_name`,
-                                authorEmail: sql`excluded.author_email`,
-                                date: sql`excluded.date`,
-                                order: sql`excluded."order"`,
-                            },
-                        });
-                } catch (error) {
-                    // Transitional fallback for environments that have not applied the
-                    // composite (repo_id, sha) unique index migration yet.
-                    try {
-                        await db
-                            .insert(commits)
-                            .values(dbCommits)
-                            .onConflictDoNothing();
-                    } catch (fallbackError) {
-                        processLogger.warn(
-                            { error, fallbackError, batchSize: dbCommits.length },
-                            'Could not persist commit batch'
-                        );
-                    }
-                }
+                await db
+                    .insert(commits)
+                    .values(dbCommits)
+                    .onConflictDoUpdate({
+                        target: [commits.repoId, commits.sha],
+                        set: {
+                            message: sql`excluded.message`,
+                            authorName: sql`excluded.author_name`,
+                            authorEmail: sql`excluded.author_email`,
+                            date: sql`excluded.date`,
+                            order: sql`excluded."order"`,
+                        },
+                    });
             }
 
             processedCommits += pageCommits.length;

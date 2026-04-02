@@ -238,6 +238,8 @@ export async function POST(request: NextRequest) {
                 url: sanitizedUrl,
                 clientId: session.sessionId,
                 db,
+                owner,
+                repoName,
             }).catch((err) => {
                 logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
             });
@@ -354,6 +356,8 @@ export async function POST(request: NextRequest) {
             url: sanitizedUrl,
             clientId: session.sessionId,
             db,
+            owner,
+            repoName,
         }).catch((err) => {
             logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
         });

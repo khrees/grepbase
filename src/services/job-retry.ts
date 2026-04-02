@@ -7,8 +7,6 @@ import { JOB_RETRY } from '@/lib/constants';
 import { processRepoIngestion } from '@/services/ingest';
 import { waitUntil } from '@vercel/functions';
 
-const MAX_RETRIES = 3;
-
 /**
  * Retry a single failed or stuck job
  */
@@ -42,7 +40,7 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
 
     // Check retry count
     const retryCount = currentJob.retryCount || 0;
-    if (retryCount >= MAX_RETRIES) {
+    if (retryCount >= JOB_RETRY.MAX_RETRIES) {
       requestLogger.warn({ retryCount }, 'Job has reached maximum retries');
       return false;
     }
@@ -139,7 +137,7 @@ export async function retryFailedJobs(clientId: string = 'cron'): Promise<{
         and(
           eq(ingestJobs.status, 'failed'),
           // Using raw SQL for the retryCount condition since it might be null
-          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${MAX_RETRIES})`
+          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${JOB_RETRY.MAX_RETRIES})`
         )
       )
       .limit(JOB_RETRY.BATCH_SIZE);
@@ -152,7 +150,7 @@ export async function retryFailedJobs(clientId: string = 'cron'): Promise<{
         and(
           eq(ingestJobs.status, 'processing'),
           sql`${ingestJobs.updatedAt} < ${stuckThreshold.toISOString()}`,
-          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${MAX_RETRIES})`
+          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${JOB_RETRY.MAX_RETRIES})`
         )
       )
       .limit(JOB_RETRY.BATCH_SIZE);

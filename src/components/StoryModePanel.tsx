@@ -180,7 +180,15 @@ export default function StoryModePanel({ repository, commits, currentIndex }: St
                         onChange={event => {
                             const value = Number.parseInt(event.target.value, 10);
                             if (!Number.isNaN(value)) {
+                                setChapterSize(value);
+                            }
+                        }}
+                        onBlur={event => {
+                            const value = Number.parseInt(event.target.value, 10);
+                            if (!Number.isNaN(value)) {
                                 setChapterSize(Math.max(2, Math.min(12, value)));
+                            } else {
+                                setChapterSize(5);
                             }
                         }}
                     />

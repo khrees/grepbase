@@ -3,17 +3,11 @@ import { and, eq } from 'drizzle-orm';
 import { repositories, commits, files } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS, COMMIT_SHA_REGEX, MAX_FILE_PATH_LENGTH } from '@/lib/constants';
+import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchFileContent, getLanguageFromPath } from '@/services/github';
-
-function isSafeFilePath(path: string): boolean {
-    if (path.length === 0 || path.length > MAX_FILE_PATH_LENGTH) return false;
-    if (path.includes('\0') || path.startsWith('/')) return false;
-    if (path.includes('?') || path.includes('#') || path.includes('\\')) return false;
-    return !path.split('/').some(segment => segment === '.' || segment === '..');
-}
+import { isSafeFilePath } from '@/lib/sanitize';
 
 export async function GET(
     request: NextRequest,
@@ -55,18 +49,13 @@ export async function GET(
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 
-        const repo = await db.select()
-            .from(repositories)
-            .where(eq(repositories.id, repoId))
-            .limit(1);
+        const [repo, commit] = await Promise.all([
+            db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1),
+            db.select().from(commits).where(and(eq(commits.repoId, repoId), eq(commits.sha, sha))).limit(1),
+        ]);
         if (repo.length === 0) {
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
-
-        const commit = await db.select()
-            .from(commits)
-            .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
-            .limit(1);
         if (commit.length === 0) {
             return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
         }

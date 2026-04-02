@@ -65,19 +65,12 @@ export async function GET(
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
 
-        // Get total count
-        const totalResult = await db.select({ count: sql<number>`count(*)` })
-            .from(commits)
-            .where(eq(commits.repoId, repoId));
+        // Run count and data fetch in parallel
+        const [totalResult, repoCommits] = await Promise.all([
+            db.select({ count: sql<number>`count(*)` }).from(commits).where(eq(commits.repoId, repoId)),
+            db.select().from(commits).where(eq(commits.repoId, repoId)).orderBy(asc(commits.order)).limit(limit).offset(offset),
+        ]);
         const total = Number(totalResult[0]?.count || 0);
-
-        // Fetch commits with pagination ordered by their position (oldest first)
-        const repoCommits = await db.select()
-            .from(commits)
-            .where(eq(commits.repoId, repoId))
-            .orderBy(asc(commits.order))
-            .limit(limit)
-            .offset(offset);
 
         requestLogger.info({ repoId, page, limit, total }, 'Commits fetched successfully');
 

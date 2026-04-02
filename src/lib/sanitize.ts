@@ -101,6 +101,17 @@ export function sanitizeBranchName(branch: string): string {
 }
 
 /**
+ * Check whether a file path is safe to use in API responses.
+ * Returns false for empty, over-length, null-byte, absolute, or traversal paths.
+ */
+export function isSafeFilePath(path: string, maxLength = 1024): boolean {
+    if (path.length === 0 || path.length > maxLength) return false;
+    if (path.includes('\0') || path.startsWith('/')) return false;
+    if (path.includes('?') || path.includes('#') || path.includes('\\')) return false;
+    return !path.split('/').some((segment) => segment === '.' || segment === '..');
+}
+
+/**
  * Sanitize file path to prevent directory traversal
  */
 export function sanitizeFilePath(path: string): string {

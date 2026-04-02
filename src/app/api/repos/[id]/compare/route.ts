@@ -3,10 +3,11 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { repositories, commits } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS, COMMIT_SHA_REGEX, MAX_FILE_PATH_LENGTH } from '@/lib/constants';
+import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchCompareDiff } from '@/services/github';
+import { isSafeFilePath } from '@/lib/sanitize';
 
 export async function GET(
     request: NextRequest,
@@ -52,7 +53,7 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid base/head commit SHA' }, { status: 400 });
         }
 
-        if (filePath && (filePath.length > MAX_FILE_PATH_LENGTH || filePath.includes('\0') || filePath.startsWith('/') || filePath.split('/').some(s => s === '.' || s === '..'))) {
+        if (filePath && !isSafeFilePath(filePath)) {
             return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
         }
 

@@ -29,7 +29,7 @@ export const githubUrlSchema = z.string()
 export const aiProviderConfigSchema = z.object({
     type: z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']),
     apiKey: z.string().optional(),
-    baseUrl: z.string().url().optional(),
+    baseUrl: z.url().optional(),
     model: z.string().max(100).optional(),
 });
 
@@ -60,7 +60,7 @@ export const explainRequestSchema = z.object({
     projectOwner: z.string().max(200).optional(),
     apiKey: z.string().optional(),
     model: z.string().max(100).optional(),
-    baseUrl: z.string().url().optional(),
+    baseUrl: z.url().optional(),
 }).refine(
     (data) => {
         if (data.type === 'commit') return !!data.commitSha;
@@ -89,7 +89,6 @@ export const explainRequestSchema = z.object({
 // Repository ingest request
 export const ingestRepoSchema = z.object({
     url: githubUrlSchema,
-    branch: z.string().optional().default('main'),
 });
 
 // Pagination params

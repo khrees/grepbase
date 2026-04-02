@@ -26,7 +26,7 @@ export class CacheService {
         if (!kv) return null;
         try {
             const value = await kv.get<T>(key);
-            if (value) {
+            if (value !== null && value !== undefined) {
                 cacheLogger.debug({ key }, 'Cache hit');
             } else {
                 cacheLogger.debug({ key }, 'Cache miss');

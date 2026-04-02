@@ -56,12 +56,14 @@ export const analyses = sqliteTable('analyses', {
     index('idx_analyses_commit_id').on(table.commitId),
 ]);
 
+export type IngestJobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
 // Ingest Jobs table - tracks background repository ingestion
 export const ingestJobs = sqliteTable('ingest_jobs', {
     id: integer('id').primaryKey({ autoIncrement: true }),
     jobId: text('job_id').notNull().unique(),
     url: text('url').notNull(),
-    status: text('status').notNull(), // 'pending', 'processing', 'completed', 'failed'
+    status: text('status').notNull().$type<IngestJobStatus>(),
     repoId: text('repo_id').references(() => repositories.id),
     progress: integer('progress').default(0), // 0-100
     totalCommits: integer('total_commits').default(0),
