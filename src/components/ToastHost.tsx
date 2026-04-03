@@ -1,58 +1,55 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import styles from './ToastHost.module.css';
+import { useToastStore } from '@/stores/toast-store';
 
+// Re-export for backward compat during migration
 export type ToastKind = 'success' | 'error' | 'info';
-
 export interface ToastEventDetail {
     message: string;
     kind?: ToastKind;
     durationMs?: number;
 }
-
 export const TOAST_EVENT_NAME = 'grepbase:toast';
 
-interface ToastState {
-    message: string;
-    kind: ToastKind;
-}
-
 export default function ToastHost() {
-    const [toast, setToast] = useState<ToastState | null>(null);
+    const toast = useToastStore(s => s.toast);
+    const dismiss = useToastStore(s => s.dismiss);
     const hideTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
-        function handleToast(event: Event) {
-            const customEvent = event as CustomEvent<ToastEventDetail>;
-            const detail = customEvent.detail;
-            if (!detail || !detail.message) return;
+        if (!toast) return;
 
-            if (hideTimerRef.current) {
-                window.clearTimeout(hideTimerRef.current);
-            }
-
-            const kind = detail.kind || 'info';
-            const duration = Math.max(1200, detail.durationMs || 2800);
-
-            setToast({
-                message: detail.message,
-                kind,
-            });
-
-            hideTimerRef.current = window.setTimeout(() => {
-                setToast(null);
-            }, duration);
+        if (hideTimerRef.current) {
+            window.clearTimeout(hideTimerRef.current);
         }
 
-        window.addEventListener(TOAST_EVENT_NAME, handleToast as EventListener);
+        hideTimerRef.current = window.setTimeout(() => {
+            dismiss();
+        }, toast.durationMs);
 
         return () => {
-            window.removeEventListener(TOAST_EVENT_NAME, handleToast as EventListener);
             if (hideTimerRef.current) {
                 window.clearTimeout(hideTimerRef.current);
             }
+        };
+    }, [toast, dismiss]);
+
+    // Legacy: keep listening for CustomEvent-based toasts during migration
+    useEffect(() => {
+        const fireToast = useToastStore.getState().fireToast;
+
+        function handleLegacyToast(event: Event) {
+            const detail = (event as CustomEvent<ToastEventDetail>).detail;
+            if (!detail || !detail.message) return;
+            fireToast(detail.message, detail.kind, detail.durationMs);
+        }
+
+        window.addEventListener(TOAST_EVENT_NAME, handleLegacyToast as EventListener);
+        return () => {
+            window.removeEventListener(TOAST_EVENT_NAME, handleLegacyToast as EventListener);
         };
     }, []);
 

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { Providers } from '@/lib/providers';
 import ToastHost from '@/components/ToastHost';
 
 export const metadata: Metadata = {
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Grepbase | Understand Code Through Time',
     description: 'Transform complex git histories into interactive AI-powered walkthroughs.',
-    url: 'https://grepbase.com',
+    url: 'https://grepbase.khrees.com',
     siteName: 'Grepbase',
     images: [
       {
@@ -37,7 +38,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {children}
+        <Providers>
+          {children}
+        </Providers>
         <ToastHost />
       </body>
     </html>

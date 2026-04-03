@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { GitBranch, Loader2, ArrowRight, Check } from 'lucide-react';
 import styles from './BranchPicker.module.css';
 import { api } from '@/lib/api-client';
+import { useBranches } from '@/hooks/use-branches';
 
 interface InitialJobData {
     jobId?: string;
@@ -20,36 +21,25 @@ interface BranchPickerProps {
 }
 
 export default function BranchPicker({ url, owner, repo, initialJobData, onConfirm }: BranchPickerProps) {
-    const [branches, setBranches] = useState<string[] | null>(null);
-    const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
+    const { data: branchData, isLoading: isLoadingBranches } = useBranches(url);
+    const branches = branchData?.branches ?? null;
+    const defaultBranch = branchData?.defaultBranch ?? null;
+
     const [selected, setSelected] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
-        api.get<{ branches: string[]; defaultBranch: string }>(
-            `/api/repos/branches?url=${encodeURIComponent(url)}`
-        ).then((data) => {
-            setBranches(data.branches);
-            setDefaultBranch(data.defaultBranch);
-            setSelected(data.defaultBranch);
-        }).catch(() => {
-            // If branch fetch fails, let user continue with default
-            setBranches([]);
-            setDefaultBranch(null);
-        });
-    }, [url]);
+    // Auto-select default branch when data arrives
+    const effectiveSelected = selected ?? defaultBranch;
 
     async function handleConfirm() {
-        const isDefault = !selected || selected === defaultBranch;
+        const isDefault = !effectiveSelected || effectiveSelected === defaultBranch;
 
         if (isDefault) {
-            // Default branch job already running — pass through
             onConfirm(initialJobData);
             return;
         }
 
-        // Non-default branch: start a new ingestion job
         setSubmitting(true);
         setError(null);
 
@@ -59,7 +49,7 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
                 repository?: { id: string | number };
                 cached?: boolean;
                 status?: string;
-            }>('/api/repos', { url, branch: selected });
+            }>('/api/repos', { url, branch: effectiveSelected });
 
             onConfirm({ jobId: data.jobId, repository: data.repository });
         } catch (err) {
@@ -68,8 +58,7 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
         }
     }
 
-    const isLoading = branches === null;
-    const isDefault = !selected || selected === defaultBranch;
+    const isDefault = !effectiveSelected || effectiveSelected === defaultBranch;
 
     return (
         <div className={styles.panel}>
@@ -80,7 +69,7 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
             </div>
 
             <div className={styles.body}>
-                {isLoading ? (
+                {isLoadingBranches ? (
                     <div className={styles.loading}>
                         <Loader2 size={14} className={styles.spinner} />
                         <span>Fetching branches&hellip;</span>
@@ -88,7 +77,7 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
                 ) : branches && branches.length > 0 ? (
                     <div className={styles.branchList}>
                         {branches.map((branch) => {
-                            const active = branch === selected;
+                            const active = branch === effectiveSelected;
                             return (
                                 <button
                                     key={branch}
@@ -117,12 +106,12 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
                 <span className={styles.hint}>
                     {isDefault
                         ? 'Fetching default branch in the background'
-                        : `Will fetch ${selected}`}
+                        : `Will fetch ${effectiveSelected}`}
                 </span>
                 <button
                     className={`btn btn-primary ${styles.confirmBtn}`}
                     onClick={handleConfirm}
-                    disabled={isLoading || submitting}
+                    disabled={isLoadingBranches || submitting}
                     type="button"
                 >
                     {submitting ? (

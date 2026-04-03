@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
+import { useState, use, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     BookOpen,
@@ -29,31 +29,134 @@ import CommitTimeline from '@/components/CommitTimeline';
 import DiffViewer from '@/components/DiffViewer';
 import StoryModePanel from '@/components/StoryModePanel';
 import { api } from '@/lib/api-client';
-import {
-    fetchCommitsPageForRepository,
-    fetchInitialCommitsForRepository,
-} from '@/lib/commit-pagination';
+import { useCommits } from '@/hooks/use-commits';
+import { useIngestJob } from '@/hooks/use-ingest-job';
+import { useBranches } from '@/hooks/use-branches';
+import { useCommitFiles } from '@/hooks/use-commit-files';
+import { useFileContent } from '@/hooks/use-file-content';
+import { useCommitDiff } from '@/hooks/use-commit-diff';
+import { useCompareDiff } from '@/hooks/use-compare-diff';
+import { useExploreStore } from '@/stores/explore-store';
+import { fireToast } from '@/stores/toast-store';
+import { getAISettings } from '@/stores/settings-store';
 import Link from 'next/link';
-import { TOAST_EVENT_NAME } from '@/components/ToastHost';
-import { getAISettings } from '@/components/SettingsModal';
-import type {
-    Repository,
-    Commit,
-    FileData,
-    CommitDiffResponse,
-    CompareDiffResponse,
-    DiffFileData,
-} from '@/types';
+import type { FileData } from '@/types';
 
-type CenterView = 'code' | 'diff' | 'story';
-type DiffScope = 'commit' | 'compare';
+// ──────────────────────────────────────────────────────────
+// Tiny hooks to absorb DOM side-effects
+// ──────────────────────────────────────────────────────────
 
-const MAX_PREFETCH_PAGES = 10; // cap background prefetch at ~500 commits
-
-function fireToast(message: string, kind: 'success' | 'error' | 'info' = 'info', durationMs?: number) {
-    if (typeof window === 'undefined') return;
-    window.dispatchEvent(new CustomEvent(TOAST_EVENT_NAME, { detail: { message, kind, durationMs } }));
+/** Dismiss a ref-bound element when clicking outside */
+function useClickOutside(
+    ref: React.RefObject<HTMLElement | null>,
+    active: boolean,
+    onClose: () => void,
+) {
+    useEffect(() => {
+        if (!active) return;
+        function handler(e: MouseEvent) {
+            if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+        }
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [active, onClose, ref]);
 }
+
+/** Global keyboard shortcuts */
+function useKeyboardNav(
+    commitsLength: number,
+    goNext: (n: number) => void,
+    goPrev: () => void,
+    setCenterView: (v: 'code' | 'diff' | 'story') => void,
+    blocked: boolean,
+) {
+    useEffect(() => {
+        function handler(e: KeyboardEvent) {
+            if (blocked) return;
+            const tag = (e.target as HTMLElement).tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+                || (e.target as HTMLElement).isContentEditable) return;
+            if (e.key === 'ArrowRight') goNext(commitsLength);
+            else if (e.key === 'ArrowLeft') goPrev();
+            else if (e.key === 'c') setCenterView('code');
+            else if (e.key === 'd') setCenterView('diff');
+            else if (e.key === 's') setCenterView('story');
+        }
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [blocked, commitsLength, goNext, goPrev, setCenterView]);
+}
+
+/** Persist & restore commit selection to URL + storage */
+function useCommitPersistence(
+    commits: { sha: string }[],
+    repoId: string,
+    setCurrentIndex: (i: number) => void,
+) {
+    const commitSelectionKey = useMemo(() => `grepbase:last_commit:${repoId}`, [repoId]);
+    const restoredRef = useRef(false);
+
+    // Restore once when commits first arrive
+    useEffect(() => {
+        if (restoredRef.current || commits.length === 0 || typeof window === 'undefined') return;
+        restoredRef.current = true;
+
+        const urlSha = new URLSearchParams(window.location.search).get('sha');
+        const storedSha =
+            sessionStorage.getItem(commitSelectionKey) ||
+            localStorage.getItem(commitSelectionKey);
+        const targetSha = urlSha || storedSha;
+        if (!targetSha) return;
+
+        const idx = commits.findIndex(c => c.sha === targetSha);
+        if (idx > 0) setCurrentIndex(idx);
+    }, [commits, commitSelectionKey, setCurrentIndex]);
+
+    // Persist current commit — called imperatively, not via effect
+    const persist = useCallback((sha: string) => {
+        if (typeof window === 'undefined') return;
+        sessionStorage.setItem(commitSelectionKey, sha);
+        localStorage.setItem(commitSelectionKey, sha);
+        const url = new URL(window.location.href);
+        if (url.searchParams.get('sha') !== sha) {
+            url.searchParams.set('sha', sha);
+            window.history.replaceState({}, '', url.toString());
+        }
+    }, [commitSelectionKey]);
+
+    return { persist };
+}
+
+/** Auto-select a file when the file list changes */
+function useAutoSelectFile(
+    files: FileData[],
+    setSelectedFile: (f: FileData | null) => void,
+) {
+    const lastSelectedPathRef = useRef<string | null>(null);
+
+    const selectFile = useCallback((file: FileData) => {
+        lastSelectedPathRef.current = file.path;
+        setSelectedFile(file);
+    }, [setSelectedFile]);
+
+    // Auto-select best file when file list changes
+    useEffect(() => {
+        if (files.length === 0) return;
+        const lastPath = lastSelectedPathRef.current;
+        const preferred = lastPath ? files.find(f => f.path === lastPath) : null;
+        const target = preferred ?? files.find(f => f.shouldFetchContent || f.hasContent) ?? null;
+        if (target) {
+            lastSelectedPathRef.current = target.path;
+            setSelectedFile(target);
+        } else {
+            setSelectedFile(null);
+        }
+    }, [files, setSelectedFile]);
+
+    return { selectFile };
+}
+
+
 
 export default function ExplorePage({ params }: { params: Promise<{ id: string }> }) {
     const { id } = use(params);
@@ -61,57 +164,62 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const searchParams = useSearchParams();
     const ingestJobId = searchParams.get('jobId');
 
-    const [repository, setRepository] = useState<Repository | null>(null);
-    const [commits, setCommits] = useState<Commit[]>([]);
-    const [currentIndex, setCurrentIndex] = useState(0);
-    const [files, setFiles] = useState<FileData[]>([]);
-    const [selectedFile, setSelectedFile] = useState<FileData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [loadingFiles, setLoadingFiles] = useState(false);
-    const [loadingContent, setLoadingContent] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
-    const [aiPanelExpanded, setAiPanelExpanded] = useState(true);
-    const [sidebarTab, setSidebarTab] = useState<'commits' | 'files'>('files');
-    const [commitOrder, setCommitOrder] = useState<'asc' | 'desc'>('asc');
-    const [diffScope, setDiffScope] = useState<DiffScope>('commit');
-    const [showHistoryModal, setShowHistoryModal] = useState(false);
-    const [focusMode, setFocusMode] = useState(false);
-    const [syncing, setSyncing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    // Zustand store for UI state
+    const {
+        currentIndex, setCurrentIndex,
+        selectedFile, setSelectedFile,
+        centerView, setCenterView,
+        sidebarTab, setSidebarTab,
+        commitOrder, setCommitOrder,
+        diffScope, setDiffScope,
+        diffViewMode, setDiffViewMode,
+        focusMode, toggleFocusMode,
+        aiPanelExpanded, toggleAiPanel,
+        showSettings, setShowSettings,
+        showHistoryModal, setShowHistoryModal,
+        showBranchMenu, setShowBranchMenu,
+        goToCommit, goNext, goPrev,
+    } = useExploreStore();
 
-    const [centerView, setCenterView] = useState<CenterView>('code');
-    const [diffViewMode, setDiffViewMode] = useState<'unified' | 'split'>('unified');
-
-    const [commitDiffFile, setCommitDiffFile] = useState<DiffFileData | null>(null);
-    const [commitDiffLoading, setCommitDiffLoading] = useState(false);
-    const [commitDiffError, setCommitDiffError] = useState<string | null>(null);
-
-    const [compareBaseSha, setCompareBaseSha] = useState('');
-    const [compareHeadSha, setCompareHeadSha] = useState('');
-    const [compareFile, setCompareFile] = useState<DiffFileData | null>(null);
-    const [compareLoading, setCompareLoading] = useState(false);
-    const [compareError, setCompareError] = useState<string | null>(null);
-    const [pendingCommitSha, setPendingCommitSha] = useState<string | null>(null);
-    const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
-    const [waitingForInitialCommits, setWaitingForInitialCommits] = useState(false);
-    const [ingestProgress, setIngestProgress] = useState(0);
-    const [ingestStatus, setIngestStatus] = useState<string | null>(null);
-
-    // Branch switcher
-    const [showBranchMenu, setShowBranchMenu] = useState(false);
-    const [branchList, setBranchList] = useState<string[] | null>(null);
+    // Local state (not shareable)
     const [switchingBranch, setSwitchingBranch] = useState(false);
-
-    const commitPrefetchRequestRef = useRef(0);
-    const currentIndexRef = useRef(0);
+    const [syncing, setSyncing] = useState(false);
     const branchMenuRef = useRef<HTMLDivElement>(null);
 
+    // ── React Query: Commits ─────────────────────────────────
+    const commitsQuery = useCommits(id);
+    const repository = commitsQuery.data?.repository ?? null;
+    const commits = useMemo(() => commitsQuery.data?.commits ?? [], [commitsQuery.data?.commits]);
+
+    // Auto-fetch remaining pages (absorbed from useEffect)
+    if (commitsQuery.hasNextPage && !commitsQuery.isFetchingNextPage) {
+        // Schedule on next microtask to avoid rendering-phase side effects
+        Promise.resolve().then(() => commitsQuery.fetchNextPage());
+    }
+
+    // ── Ingest job polling ────────────────────────────────────
+    const waitingForCommits = !!ingestJobId && commits.length === 0 && !commitsQuery.isLoading;
+    const ingestJob = useIngestJob(ingestJobId, { enabled: waitingForCommits });
+
+    // When ingest progresses, refetch commits (derived from query data, no effect needed)
+    const ingestJobData = ingestJob.data;
+    const ingestTriggeredRefetch = useRef(false);
+    if (ingestJobData && !ingestTriggeredRefetch.current) {
+        const hasProcessed = Number(ingestJobData.processedCommits || 0) > 0;
+        const shouldRefetch = (ingestJobData.repository || ingestJobData.repoId) &&
+            (ingestJobData.ready || hasProcessed || ingestJobData.status === 'completed');
+        if (shouldRefetch) {
+            ingestTriggeredRefetch.current = true;
+            Promise.resolve().then(() => commitsQuery.refetch());
+        }
+    }
+    // Reset trigger when job data changes
+    if (!ingestJobData) ingestTriggeredRefetch.current = false;
+
+    // ── Derived state ────────────────────────────────────────
     const currentCommit = commits[currentIndex];
     const currentCommitSha = currentCommit?.sha;
-    const repositoryId = repository?.id;
-    const commitSelectionKey = useMemo(() => `grepbase:last_commit:${id}`, [id]);
 
-    // Derive the active branch and the base GitHub URL (without @branch suffix)
     const activeBranch = useMemo(() => {
         if (!repository) return null;
         const url = repository.url ?? '';
@@ -127,6 +235,46 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return atIdx !== -1 ? url.slice(0, atIdx) : url;
     }, [repository]);
 
+    const orderedCommits = useMemo(
+        () => commitOrder === 'asc' ? commits : [...commits].reverse(),
+        [commits, commitOrder]
+    );
+
+    // Compare SHAs — derived with useMemo, not synced via useEffect
+    const defaultCompareBaseSha = useMemo(() => {
+        if (commits.length === 0) return '';
+        return commits[Math.max(0, currentIndex - 1)]?.sha || commits[0].sha;
+    }, [commits, currentIndex]);
+
+    const defaultCompareHeadSha = useMemo(() => {
+        if (commits.length === 0) return '';
+        return commits[currentIndex]?.sha || commits[commits.length - 1].sha;
+    }, [commits, currentIndex]);
+
+    // User can override; reset when currentIndex changes
+    const [compareBaseShaOverride, setCompareBaseSha] = useState('');
+    const [compareHeadShaOverride, setCompareHeadSha] = useState('');
+    const compareBaseSha = compareBaseShaOverride || defaultCompareBaseSha;
+    const compareHeadSha = compareHeadShaOverride || defaultCompareHeadSha;
+
+    // Reset overrides when navigating commits
+    const prevIndexRef = useRef(currentIndex);
+    if (prevIndexRef.current !== currentIndex) {
+        prevIndexRef.current = currentIndex;
+        if (compareBaseShaOverride) setCompareBaseSha('');
+        if (compareHeadShaOverride) setCompareHeadSha('');
+    }
+
+    // ── React Query: Branches ────────────────────────────────
+    const branchesQuery = useBranches(baseRepoUrl || undefined, {
+        enabled: showBranchMenu && !!baseRepoUrl,
+    });
+    const branchList = branchesQuery.data?.branches ?? null;
+
+    // ── React Query: Files ───────────────────────────────────
+    const filesQuery = useCommitFiles(id, currentCommitSha);
+    const files = useMemo(() => filesQuery.data ?? [], [filesQuery.data]);
+
     const visibleFilePaths = useMemo(
         () => files
             .filter(file => file.shouldFetchContent || file.hasContent)
@@ -134,23 +282,110 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         [files]
     );
 
-    const orderedCommits = useMemo(
-        () => commitOrder === 'asc' ? commits : [...commits].reverse(),
-        [commits, commitOrder]
+    const filePathMap = useMemo(() => {
+        const map = new Map<string, FileData>();
+        for (const file of files) {
+            map.set(file.path, file);
+            map.set(file.path.toLowerCase(), file);
+        }
+        return map;
+    }, [files]);
+
+    // ── Auto-select file (custom hook — 1 effect inside) ─────
+    const { selectFile } = useAutoSelectFile(files, setSelectedFile);
+
+    // ── React Query: File content ────────────────────────────
+    const selectedFilePath = selectedFile?.path;
+    const needsContent = !!selectedFile && !selectedFile.content;
+    const fileContentQuery = useFileContent(
+        id,
+        currentCommitSha,
+        needsContent ? selectedFilePath : undefined
     );
 
-    const loadBranches = useCallback(async () => {
-        if (branchList !== null || !baseRepoUrl) return;
-        try {
-            const data = await api.get<{ branches: string[]; defaultBranch: string }>(
-                `/api/repos/branches?url=${encodeURIComponent(baseRepoUrl)}`
-            );
-            setBranchList(data.branches);
-        } catch {
-            setBranchList([]);
+    // Derive file with content — no effect needed
+    const resolvedSelectedFile = useMemo(() => {
+        if (!selectedFile) return null;
+        if (selectedFile.content) return selectedFile;
+        if (fileContentQuery.data && needsContent) {
+            return { ...selectedFile, content: fileContentQuery.data, hasContent: true };
         }
-    }, [baseRepoUrl, branchList]);
+        return selectedFile;
+    }, [selectedFile, fileContentQuery.data, needsContent]);
 
+    // ── React Query: Commit diff ─────────────────────────────
+    const commitDiffQuery = useCommitDiff(
+        id,
+        currentCommitSha,
+        selectedFilePath,
+        { enabled: centerView === 'diff' && diffScope === 'commit' && !!selectedFile }
+    );
+
+    // ── React Query: Compare diff ────────────────────────────
+    const compareDiffQuery = useCompareDiff(
+        id,
+        compareBaseSha || undefined,
+        compareHeadSha || undefined,
+        selectedFilePath,
+        { enabled: centerView === 'diff' && diffScope === 'compare' && !!selectedFile }
+    );
+
+    // ── Commit persistence (custom hook — 1 init effect) ─────
+    const { persist: persistCommit } = useCommitPersistence(commits, id, setCurrentIndex);
+
+    // Persist whenever currentCommit changes — imperative, not effect
+    const lastPersistedSha = useRef<string | null>(null);
+    if (currentCommitSha && currentCommitSha !== lastPersistedSha.current) {
+        lastPersistedSha.current = currentCommitSha;
+        persistCommit(currentCommitSha);
+    }
+
+    // ── AI settings hint (one-time, run in render) ───────────
+    const hintShownRef = useRef(false);
+    if (!hintShownRef.current && !commitsQuery.isLoading && typeof window !== 'undefined') {
+        hintShownRef.current = true;
+        const hintKey = 'grepbase:ai_hint_shown';
+        if (!sessionStorage.getItem(hintKey) && !getAISettings()) {
+            sessionStorage.setItem(hintKey, '1');
+            // Schedule after render to avoid setState-in-render
+            Promise.resolve().then(() =>
+                fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000)
+            );
+        }
+    }
+
+    // ── DOM hooks (2 legitimate effects) ─────────────────────
+    useClickOutside(branchMenuRef, showBranchMenu, useCallback(() => setShowBranchMenu(false), [setShowBranchMenu]));
+    useKeyboardNav(commits.length, goNext, goPrev, setCenterView, showSettings || showHistoryModal);
+
+    // ── File opening from AI references ──────────────────────
+    const openFileFromAIReference = useCallback(async (path: string) => {
+        const normalized = path
+            .trim()
+            .replace(/^\/+/, '')
+            .replace(/^a\//, '')
+            .replace(/^b\//, '')
+            .replace(/^\.\/+/, '')
+            .replace(/\/+$/, '');
+
+        if (!normalized) return;
+
+        const exact = filePathMap.get(normalized) ?? filePathMap.get(normalized.toLowerCase());
+        if (exact) { selectFile(exact); return; }
+
+        const suffix =
+            files.find(file => file.path.endsWith(`/${normalized}`)) ||
+            files.find(file => file.path.endsWith(normalized));
+        if (suffix) { selectFile(suffix); return; }
+
+        const directoryPrefix = `${normalized}/`;
+        const firstInDirectory = [...files]
+            .filter(file => file.path.startsWith(directoryPrefix))
+            .sort((a, b) => a.path.localeCompare(b.path))[0];
+        if (firstInDirectory) { selectFile(firstInDirectory); }
+    }, [filePathMap, files, selectFile]);
+
+    // ── Branch switching ─────────────────────────────────────
     const switchBranch = useCallback(async (branch: string) => {
         if (!baseRepoUrl || branch === activeBranch || switchingBranch) return;
         setShowBranchMenu(false);
@@ -158,9 +393,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
         try {
             const isDefault = branch === (repository?.defaultBranch || 'main');
-            const body = isDefault
-                ? { url: baseRepoUrl }
-                : { url: baseRepoUrl, branch };
+            const body = isDefault ? { url: baseRepoUrl } : { url: baseRepoUrl, branch };
 
             const data = await api.post<{
                 jobId?: string;
@@ -175,7 +408,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                     : `/explore/${targetId}`
                 );
             } else if (data.jobId) {
-                // Poll until repoId resolves
                 let attempts = 0;
                 const poll = async (): Promise<void> => {
                     attempts++;
@@ -202,352 +434,9 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             fireToast(err instanceof Error ? err.message : 'Failed to switch branch', 'error');
             setSwitchingBranch(false);
         }
-    }, [activeBranch, baseRepoUrl, repository?.defaultBranch, router, switchingBranch]);
+    }, [activeBranch, baseRepoUrl, repository?.defaultBranch, router, setShowBranchMenu, switchingBranch]);
 
-    const appendUniqueCommits = useCallback((incoming: Commit[]) => {
-        if (incoming.length === 0) return;
-        setCommits(prev => {
-            const seenShas = new Set(prev.map(commit => commit.sha));
-            const additions = incoming.filter(commit => !seenShas.has(commit.sha));
-            if (additions.length === 0) return prev;
-            return [...prev, ...additions];
-        });
-    }, []);
-
-    const prefetchRemainingCommits = useCallback((startPage: number) => {
-        const requestId = commitPrefetchRequestRef.current + 1;
-        commitPrefetchRequestRef.current = requestId;
-
-        if (startPage <= 1) {
-            setLoadingMoreCommits(false);
-            return;
-        }
-
-        setLoadingMoreCommits(true);
-
-        const load = async () => {
-            let page = startPage;
-            let hasNext = true;
-
-            while (hasNext && commitPrefetchRequestRef.current === requestId) {
-                if (page > startPage + MAX_PREFETCH_PAGES) break;
-
-                const pageData = await fetchCommitsPageForRepository(id, page);
-                if (commitPrefetchRequestRef.current !== requestId) {
-                    return;
-                }
-
-                appendUniqueCommits(pageData.commits);
-
-                hasNext = Boolean(pageData.pagination?.hasNext);
-                page += 1;
-            }
-        };
-
-        void load()
-            .catch((prefetchError) => {
-                if (commitPrefetchRequestRef.current !== requestId) return;
-                console.warn('Background commit prefetch stopped:', prefetchError);
-            })
-            .finally(() => {
-                if (commitPrefetchRequestRef.current === requestId) {
-                    setLoadingMoreCommits(false);
-                }
-            });
-    }, [appendUniqueCommits, id]);
-
-    const fetchRepositoryData = useCallback(async (preserveSha?: string, showLoading = false) => {
-        commitPrefetchRequestRef.current += 1;
-        setLoadingMoreCommits(false);
-
-        if (showLoading) {
-            setLoading(true);
-        }
-
-        try {
-            const data = await fetchInitialCommitsForRepository(id);
-
-            let targetSha = preserveSha;
-            if (!targetSha && typeof window !== 'undefined') {
-                const urlSha = new URLSearchParams(window.location.search).get('sha');
-                const storedSha =
-                    sessionStorage.getItem(commitSelectionKey) ||
-                    localStorage.getItem(commitSelectionKey);
-                targetSha = urlSha || storedSha || undefined;
-            }
-
-            setRepository(data.repository);
-            setCommits(data.commits);
-            let nextIndex = data.commits.length === 0
-                ? 0
-                : Math.min(currentIndexRef.current, data.commits.length - 1);
-            let unresolvedTargetSha: string | null = null;
-
-            if (targetSha) {
-                const idx = data.commits.findIndex(commit => commit.sha === targetSha);
-                if (idx >= 0) {
-                    nextIndex = idx;
-                } else {
-                    unresolvedTargetSha = targetSha;
-                }
-            }
-
-            setCurrentIndex(nextIndex);
-            setPendingCommitSha(unresolvedTargetSha);
-
-            if (data.pagination?.hasNext) {
-                prefetchRemainingCommits((data.pagination.page || 1) + 1);
-            } else {
-                setLoadingMoreCommits(false);
-                setPendingCommitSha(null);
-            }
-
-            setError(null);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Something went wrong');
-        } finally {
-            if (showLoading) {
-                setLoading(false);
-            }
-        }
-    }, [commitSelectionKey, id, prefetchRemainingCommits]);
-
-    useEffect(() => {
-        fetchRepositoryData(undefined, true);
-    }, [fetchRepositoryData]);
-
-    useEffect(() => {
-        if (loading) return;
-
-        if (ingestJobId && commits.length === 0) {
-            setWaitingForInitialCommits(true);
-            return;
-        }
-
-        setWaitingForInitialCommits(false);
-        setIngestStatus(null);
-        setIngestProgress(0);
-    }, [commits.length, ingestJobId, loading]);
-
-    useEffect(() => {
-        if (!waitingForInitialCommits || !ingestJobId) return;
-
-        let cancelled = false;
-        let inFlight = false;
-
-        const poll = async () => {
-            if (cancelled || inFlight) return;
-            inFlight = true;
-
-            try {
-                const jobResponse = await api.get<{
-                    status: string;
-                    progress?: number;
-                    error?: string;
-                    ready?: boolean;
-                    processedCommits?: number;
-                    repoId?: number | null;
-                    repository?: { id: number };
-                }>(`/api/jobs/${ingestJobId}`);
-
-                if (cancelled) return;
-
-                setIngestStatus(jobResponse.status);
-                setIngestProgress(Number(jobResponse.progress || 0));
-
-                const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
-
-                if (jobResponse.status === 'failed') {
-                    setError(jobResponse.error || 'Failed to ingest repository');
-                    setWaitingForInitialCommits(false);
-                    return;
-                }
-
-                if (
-                    (jobResponse.repository || jobResponse.repoId) &&
-                    (jobResponse.ready || hasProcessedCommits || jobResponse.status === 'completed')
-                ) {
-                    await fetchRepositoryData(undefined, false);
-                }
-
-                if (jobResponse.status === 'completed' && !hasProcessedCommits) {
-                    setWaitingForInitialCommits(false);
-                }
-            } catch (pollError) {
-                if (!cancelled) {
-                    console.error('Failed to poll ingest job:', pollError);
-                    fireToast('Lost connection to ingestion. Retrying\u2026', 'error', 4000);
-                }
-            } finally {
-                inFlight = false;
-            }
-        };
-
-        void poll();
-        const interval = setInterval(() => {
-            void poll();
-        }, 2000);
-
-        return () => {
-            cancelled = true;
-            clearInterval(interval);
-        };
-    }, [fetchRepositoryData, ingestJobId, waitingForInitialCommits]);
-
-    useEffect(() => {
-        currentIndexRef.current = currentIndex;
-    }, [currentIndex]);
-
-    useEffect(() => {
-        if (!pendingCommitSha) return;
-        const idx = commits.findIndex(commit => commit.sha === pendingCommitSha);
-        if (idx < 0) return;
-        setCurrentIndex(idx);
-        setPendingCommitSha(null);
-    }, [commits, pendingCommitSha]);
-
-    useEffect(() => {
-        return () => {
-            commitPrefetchRequestRef.current += 1;
-        };
-    }, []);
-
-    // Nudge user to configure AI on first explore load (once per session)
-    useEffect(() => {
-        if (loading) return;
-        if (typeof window === 'undefined') return;
-        const hintKey = 'grepbase:ai_hint_shown';
-        if (sessionStorage.getItem(hintKey)) return;
-        if (getAISettings()) return; // already configured
-        sessionStorage.setItem(hintKey, '1');
-        fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000);
-    }, [loading]);
-
-    useEffect(() => {
-        if (!currentCommit?.sha || typeof window === 'undefined') return;
-
-        sessionStorage.setItem(commitSelectionKey, currentCommit.sha);
-        localStorage.setItem(commitSelectionKey, currentCommit.sha);
-
-        const currentUrl = new URL(window.location.href);
-        if (currentUrl.searchParams.get('sha') !== currentCommit.sha) {
-            currentUrl.searchParams.set('sha', currentCommit.sha);
-            window.history.replaceState({}, '', currentUrl.toString());
-        }
-    }, [commitSelectionKey, currentCommit?.sha]);
-
-    const selectFile = useCallback(async (file: FileData) => {
-        if (file.content) {
-            setSelectedFile(file);
-            return;
-        }
-
-        if (!currentCommitSha) return;
-
-        setLoadingContent(true);
-        setSelectedFile({ ...file, content: null });
-
-        try {
-            const data = await api.get<{ content?: string }>(
-                `/api/repos/${id}/commits/${currentCommitSha}/content?path=${encodeURIComponent(file.path)}`
-            );
-
-            if (data.content) {
-                const updatedFile = { ...file, content: data.content, hasContent: true };
-                setFiles(prev => prev.map(existing => (existing.path === file.path ? updatedFile : existing)));
-                setSelectedFile(updatedFile);
-            }
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('rate limit exceeded')) {
-                fireToast('GitHub rate limit reached. Please wait and try again.', 'error', 6000);
-            }
-            console.error('Failed to fetch file content:', err);
-        } finally {
-            setLoadingContent(false);
-        }
-    }, [currentCommitSha, id]);
-
-    useEffect(() => {
-        if (!currentCommitSha || !repositoryId) return;
-
-        let cancelled = false;
-
-        async function fetchFilesForCommit() {
-            setLoadingFiles(true);
-            setSelectedFile(null);
-            try {
-                const data = await api.get<{ files?: FileData[] }>(`/api/repos/${id}/commits/${currentCommitSha}`);
-                if (cancelled) return;
-
-                const nextFiles = data.files || [];
-                setFiles(nextFiles);
-
-                const firstLoadable = nextFiles.find(file => file.shouldFetchContent || file.hasContent);
-                if (firstLoadable) {
-                    void selectFile(firstLoadable);
-                }
-            } catch (err) {
-                if (!cancelled) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    if (msg.includes('rate limit exceeded')) {
-                        fireToast('GitHub rate limit reached. Please wait and try again.', 'error', 6000);
-                    }
-                    console.error('Failed to fetch files:', err);
-                }
-            } finally {
-                if (!cancelled) {
-                    setLoadingFiles(false);
-                }
-            }
-        }
-
-        void fetchFilesForCommit();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [currentCommitSha, id, repositoryId, selectFile]);
-
-    const openFileFromAIReference = useCallback(async (path: string) => {
-        const normalized = path
-            .trim()
-            .replace(/^\/+/, '')
-            .replace(/^a\//, '')
-            .replace(/^b\//, '')
-            .replace(/^\.\/+/, '')
-            .replace(/\/+$/, '');
-
-        if (!normalized) return;
-
-        const exact =
-            files.find(file => file.path === normalized) ||
-            files.find(file => file.path.toLowerCase() === normalized.toLowerCase());
-
-        if (exact) {
-            await selectFile(exact);
-            return;
-        }
-
-        const suffix =
-            files.find(file => file.path.endsWith(`/${normalized}`)) ||
-            files.find(file => file.path.endsWith(normalized));
-
-        if (suffix) {
-            await selectFile(suffix);
-            return;
-        }
-
-        const directoryPrefix = `${normalized}/`;
-        const firstInDirectory = [...files]
-            .filter(file => file.path.startsWith(directoryPrefix))
-            .sort((a, b) => a.path.localeCompare(b.path))[0];
-
-        if (firstInDirectory) {
-            await selectFile(firstInDirectory);
-        }
-    }, [files, selectFile]);
-
+    // ── Resync ───────────────────────────────────────────────
     const handleResync = useCallback(async () => {
         if (!repository || syncing) return;
         setSyncing(true);
@@ -560,20 +449,16 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             if (data.jobId) {
                 let attempts = 0;
                 const maxAttempts = 60;
-
                 const poll = async (): Promise<void> => {
                     attempts += 1;
                     try {
                         const jobResponse = await api.get<{
-                            status: string;
-                            error?: string;
-                            ready?: boolean;
-                            processedCommits?: number;
+                            status: string; error?: string; ready?: boolean; processedCommits?: number;
                         }>(`/api/jobs/${data.jobId}`);
 
                         const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
                         if (jobResponse.status === 'completed' || jobResponse.ready || hasProcessedCommits) {
-                            await fetchRepositoryData(currentCommit?.sha, false);
+                            await commitsQuery.refetch();
                             setSyncing(false);
                             fireToast('Repository synced', 'success');
                         } else if (jobResponse.status === 'failed') {
@@ -591,168 +476,21 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         setSyncing(false);
                     }
                 };
-
                 void poll();
             } else {
-                await fetchRepositoryData(currentCommit?.sha, false);
+                await commitsQuery.refetch();
                 setSyncing(false);
             }
         } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Failed to resync repository';
-            fireToast(msg, 'error');
+            fireToast(err instanceof Error ? err.message : 'Failed to resync repository', 'error');
             setSyncing(false);
         }
-    }, [currentCommit?.sha, fetchRepositoryData, repository, syncing]);
+    }, [commitsQuery, repository, syncing]);
 
-    const goToCommit = useCallback((index: number) => {
-        if (index < 0 || index >= commits.length) return;
-        setCurrentIndex(index);
-        setSelectedFile(null);
-        setSidebarTab('files');
-    }, [commits.length]);
-
-    const goNext = useCallback(() => {
-        setCurrentIndex(prev => {
-            if (commits.length === 0) return 0;
-            const nextIndex = Math.min(prev + 1, commits.length - 1);
-            if (nextIndex !== prev) {
-                setSelectedFile(null);
-            }
-            return nextIndex;
-        });
-    }, [commits.length]);
-
-    const goPrev = useCallback(() => {
-        setCurrentIndex(prev => {
-            const nextIndex = Math.max(prev - 1, 0);
-            if (nextIndex !== prev) {
-                setSelectedFile(null);
-            }
-            return nextIndex;
-        });
-    }, []);
-
-    // Close branch menu on outside click
-    useEffect(() => {
-        if (!showBranchMenu) return;
-        function handleClickOutside(e: MouseEvent) {
-            if (branchMenuRef.current && !branchMenuRef.current.contains(e.target as Node)) {
-                setShowBranchMenu(false);
-            }
-        }
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, [showBranchMenu]);
-
-    useEffect(() => {
-        function handleKeyDown(event: KeyboardEvent) {
-            if (showSettings || showHistoryModal) return;
-            const tag = (event.target as HTMLElement).tagName;
-            const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-                || (event.target as HTMLElement).isContentEditable;
-            if (isEditable) return;
-
-            if (event.key === 'ArrowRight') {
-                goNext();
-            } else if (event.key === 'ArrowLeft') {
-                goPrev();
-            }
-        }
-
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [goNext, goPrev, showHistoryModal, showSettings]);
-
-    useEffect(() => {
-        if (!currentCommit?.sha) return;
-        if (centerView !== 'diff' || diffScope !== 'commit') return;
-        if (!selectedFile) {
-            setCommitDiffFile(null);
-            return;
-        }
-
-        let cancelled = false;
-
-        async function fetchCommitDiffData() {
-            setCommitDiffLoading(true);
-            setCommitDiffError(null);
-
-            try {
-                const url = `/api/repos/${id}/commits/${currentCommit.sha}/diff?path=${encodeURIComponent(selectedFile!.path)}`;
-                const data = await api.get<CommitDiffResponse>(url);
-                if (cancelled) return;
-
-                setCommitDiffFile(data.files?.[0] ?? null);
-            } catch (err) {
-                if (!cancelled) {
-                    setCommitDiffFile(null);
-                    setCommitDiffError(err instanceof Error ? err.message : 'Failed to load commit diff');
-                }
-            } finally {
-                if (!cancelled) {
-                    setCommitDiffLoading(false);
-                }
-            }
-        }
-
-        void fetchCommitDiffData();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [centerView, currentCommit?.sha, diffScope, id, selectedFile]);
-
-    useEffect(() => {
-        if (commits.length === 0) return;
-
-        const head = commits[currentIndex]?.sha || commits[commits.length - 1].sha;
-        const base = commits[Math.max(0, currentIndex - 1)]?.sha || head;
-
-        setCompareHeadSha(head);
-        setCompareBaseSha(base);
-    }, [commits, currentIndex]);
-
-    useEffect(() => {
-        if (centerView !== 'diff' || diffScope !== 'compare') return;
-        if (!compareBaseSha || !compareHeadSha) return;
-        if (!selectedFile) {
-            setCompareFile(null);
-            return;
-        }
-
-        let cancelled = false;
-
-        async function fetchCompareData() {
-            setCompareLoading(true);
-            setCompareError(null);
-
-            try {
-                const url = `/api/repos/${id}/compare?base=${encodeURIComponent(compareBaseSha)}&head=${encodeURIComponent(compareHeadSha)}&path=${encodeURIComponent(selectedFile!.path)}`;
-                const data = await api.get<CompareDiffResponse>(url);
-
-                if (cancelled) return;
-
-                setCompareFile(data.files?.[0] ?? null);
-            } catch (err) {
-                if (!cancelled) {
-                    setCompareFile(null);
-                    setCompareError(err instanceof Error ? err.message : 'Failed to compare commits');
-                }
-            } finally {
-                if (!cancelled) {
-                    setCompareLoading(false);
-                }
-            }
-        }
-
-        void fetchCompareData();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [centerView, compareBaseSha, compareHeadSha, diffScope, id, selectedFile]);
-
-    if (loading) {
+    // ──────────────────────────────────────────────────────────
+    // Render
+    // ──────────────────────────────────────────────────────────
+    if (commitsQuery.isLoading) {
         return (
             <div className={styles.loadingState}>
                 <Loader2 size={32} className={styles.spinner} />
@@ -761,10 +499,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         );
     }
 
-    if (error) {
+    if (commitsQuery.error) {
         return (
             <div className={styles.errorState}>
-                <p>{error}</p>
+                <p>{commitsQuery.error instanceof Error ? commitsQuery.error.message : 'Something went wrong'}</p>
                 <button className="btn btn-primary" onClick={() => router.push('/')}>
                     Go Home
                 </button>
@@ -773,7 +511,9 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     }
 
     if (!repository || commits.length === 0) {
-        if (waitingForInitialCommits) {
+        if (waitingForCommits) {
+            const ingestProgress = ingestJob.data?.progress ? Number(ingestJob.data.progress) : 0;
+            const ingestStatus = ingestJob.data?.status;
             return (
                 <div className={styles.loadingState}>
                     <Loader2 size={32} className={styles.spinner} />
@@ -796,9 +536,25 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         );
     }
 
+    // Diff data from queries
+    const commitDiffFile = commitDiffQuery.data ?? null;
+    const commitDiffLoading = commitDiffQuery.isLoading;
+    const commitDiffError = commitDiffQuery.error
+        ? (commitDiffQuery.error instanceof Error ? commitDiffQuery.error.message : 'Failed to load commit diff')
+        : null;
+
+    const compareFile = compareDiffQuery.data ?? null;
+    const compareLoading = compareDiffQuery.isLoading;
+    const compareError = compareDiffQuery.error
+        ? (compareDiffQuery.error instanceof Error ? compareDiffQuery.error.message : 'Failed to compare commits')
+        : null;
+
+    const loadingFiles = filesQuery.isLoading;
+    const loadingContent = fileContentQuery.isLoading;
+
     return (
         <div className={styles.container}>
-            {loadingMoreCommits && <div className={styles.fetchingBar} aria-hidden="true" />}
+            {commitsQuery.isFetchingNextPage && <div className={styles.fetchingBar} aria-hidden="true" />}
             <header className={styles.header}>
                 <div className={styles.headerLeft}>
                     <Link href="/" className={`btn btn-ghost ${styles.headerHomeBtn}`}>
@@ -812,10 +568,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         <div className={styles.branchSwitcher} ref={branchMenuRef}>
                             <button
                                 className={`${styles.branchBadge} ${showBranchMenu ? styles.branchBadgeOpen : ''}`}
-                                onClick={() => {
-                                    setShowBranchMenu(v => !v);
-                                    loadBranches();
-                                }}
+                                onClick={() => setShowBranchMenu(!showBranchMenu)}
                                 disabled={switchingBranch}
                                 title="Switch branch"
                             >
@@ -860,7 +613,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 <div className={styles.headerCenter}>
                     <button
                         className={styles.navArrow}
-                        onClick={goPrev}
+                        onClick={() => goPrev()}
                         disabled={currentIndex === 0}
                         title="Previous commit (←)"
                     >
@@ -868,14 +621,14 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                     </button>
                     <button className={styles.chapterTrigger} onClick={() => setShowHistoryModal(true)}>
                         <span className={styles.chapterLabel}>
-                            #{currentIndex + 1}{loadingMoreCommits ? '' : ` of ${commits.length}`}
+                            #{currentIndex + 1} of {commitsQuery.isFetchingNextPage ? `${commits.length}+` : commits.length}
                         </span>
                         <span className={styles.chapterTitle}>{currentCommit?.message?.split('\n')[0] ?? ''}</span>
                         <ChevronDown size={12} className={styles.chapterChevron} />
                     </button>
                     <button
                         className={styles.navArrow}
-                        onClick={goNext}
+                        onClick={() => goNext(commits.length)}
                         disabled={currentIndex === commits.length - 1}
                         title="Next commit (→)"
                     >
@@ -895,7 +648,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
                     <button
                         className={`btn btn-ghost ${styles.headerBtn} ${focusMode ? styles.active : ''}`}
-                        onClick={() => setFocusMode(!focusMode)}
+                        onClick={toggleFocusMode}
                         title="Focus Mode"
                     >
                         {focusMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
@@ -946,7 +699,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     <CommitTimeline
                                         commits={orderedCommits}
                                         currentIndex={commitOrder === 'asc' ? currentIndex : commits.length - 1 - currentIndex}
-                                        onSelect={(displayIdx) => goToCommit(commitOrder === 'asc' ? displayIdx : commits.length - 1 - displayIdx)}
+                                        onSelect={(displayIdx) => goToCommit(commitOrder === 'asc' ? displayIdx : commits.length - 1 - displayIdx, commits.length)}
                                     />
                                 ) : loadingFiles ? (
                                     <div className={styles.loadingFiles}>
@@ -955,10 +708,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                 ) : (
                                     <FileTree
                                         files={files}
-                                        selectedFile={selectedFile}
-                                        onSelectFile={(file) => {
-                                            void selectFile(file);
-                                        }}
+                                        selectedFile={resolvedSelectedFile}
+                                        onSelectFile={selectFile}
                                     />
                                 )}
                             </div>
@@ -1016,17 +767,24 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         <div className={styles.codeArea}>
                             <div className={styles.codeDisplay}>
                                 {centerView === 'code' && (
-                                    loadingContent ? (
+                                    resolvedSelectedFile?.content ? (
+                                        <div className={styles.codeViewerWrapper}>
+                                            <CodeViewer
+                                                code={resolvedSelectedFile.content}
+                                                language={resolvedSelectedFile.language}
+                                                filename={resolvedSelectedFile.path}
+                                            />
+                                            {(loadingContent || loadingFiles) && (
+                                                <div className={styles.codeLoadingOverlay}>
+                                                    <Loader2 size={20} className={styles.spinner} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : loadingContent || loadingFiles ? (
                                         <div className={styles.loadingFiles}>
                                             <Loader2 size={24} className={styles.spinner} />
                                             <p>Loading content...</p>
                                         </div>
-                                    ) : selectedFile?.content ? (
-                                        <CodeViewer
-                                            code={selectedFile.content}
-                                            language={selectedFile.language}
-                                            filename={selectedFile.path}
-                                        />
                                     ) : (
                                         <div className={styles.noFile}>
                                             <div className={styles.emptyStateIcon}>
@@ -1059,8 +817,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                             {diffScope === 'commit' ? (
                                                 <div className={styles.diffToolbarControls}>
                                                     <span className={styles.diffFileName}>
-                                                        {selectedFile
-                                                            ? selectedFile.path.split('/').pop()
+                                                        {resolvedSelectedFile
+                                                            ? resolvedSelectedFile.path.split('/').pop()
                                                             : 'No file selected'}
                                                     </span>
                                                 </div>
@@ -1107,7 +865,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         </div>
 
                                         {diffScope === 'commit' ? (
-                                            !selectedFile ? (
+                                            !resolvedSelectedFile ? (
                                                 <div className={styles.noFile}>
                                                     <h3>No file selected</h3>
                                                     <p>Select a file from the tree to view its diff.</p>
@@ -1122,9 +880,14 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                             ) : commitDiffFile ? (
                                                 <>
                                                     <div className={styles.diffMeta}>
-                                                        <span>{commitDiffFile.status}</span>
-                                                        <span className={styles.diffAdd}>+{commitDiffFile.additions}</span>
-                                                        <span className={styles.diffDel}>-{commitDiffFile.deletions}</span>
+                                                        <span className={`${styles.diffStatusBadge} ${
+                                                            commitDiffFile.status === 'added'   ? styles.diffStatusAdded   :
+                                                            commitDiffFile.status === 'removed' ? styles.diffStatusRemoved :
+                                                            commitDiffFile.status === 'renamed' ? styles.diffStatusRenamed :
+                                                            styles.diffStatusModified
+                                                        }`}>{commitDiffFile.status}</span>
+                                                        <span className={`${styles.diffStatPill} ${styles.diffStatAdd}`}>+{commitDiffFile.additions}</span>
+                                                        <span className={`${styles.diffStatPill} ${styles.diffStatDel}`}>-{commitDiffFile.deletions}</span>
                                                     </div>
                                                     <DiffViewer patch={commitDiffFile.patch} mode={diffViewMode} />
                                                 </>
@@ -1135,7 +898,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                 </div>
                                             )
                                         ) : (
-                                            !selectedFile ? (
+                                            !resolvedSelectedFile ? (
                                                 <div className={styles.noFile}>
                                                     <h3>No file selected</h3>
                                                     <p>Select a file from the tree to compare.</p>
@@ -1180,7 +943,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         repository={repository}
                                         commits={commits}
                                         currentIndex={currentIndex}
-                                        onNavigateToCommit={goToCommit}
+                                        onNavigateToCommit={(idx) => goToCommit(idx, commits.length)}
                                     />
                                 )}
                             </div>
@@ -1200,24 +963,22 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                             <div className={`${styles.aiPanelInner} ${!aiPanelExpanded ? styles.aiPanelCollapsed : ''}`}>
                                 <button
                                     className={styles.aiCollapseBtn}
-                                    onClick={() => setAiPanelExpanded(v => !v)}
+                                    onClick={toggleAiPanel}
                                     title={aiPanelExpanded ? 'Collapse AI' : 'Expand AI'}
                                 >
                                     {aiPanelExpanded ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
                                 </button>
                                 {aiPanelExpanded ? (
-                                    <>
-                                        <div className={styles.aiPanelWrapper}>
-                                            <AIPanel
-                                                repository={repository}
-                                                commit={currentCommit}
-                                                totalCommits={commits.length}
-                                                currentIndex={currentIndex}
-                                                onOpenFile={openFileFromAIReference}
-                                                visibleFilePaths={visibleFilePaths}
-                                            />
-                                        </div>
-                                    </>
+                                    <div className={styles.aiPanelWrapper}>
+                                        <AIPanel
+                                            repository={repository}
+                                            commit={currentCommit}
+                                            totalCommits={commits.length}
+                                            currentIndex={currentIndex}
+                                            onOpenFile={openFileFromAIReference}
+                                            visibleFilePaths={visibleFilePaths}
+                                        />
+                                    </div>
                                 ) : (
                                     <div className={styles.aiCollapsedLabel}>AI</div>
                                 )}
@@ -1233,7 +994,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                     onClose={() => setShowHistoryModal(false)}
                     commits={commits}
                     currentIndex={currentIndex}
-                    onSelectCommit={goToCommit}
+                    onSelectCommit={(idx) => goToCommit(idx, commits.length)}
                 />
             )}
 

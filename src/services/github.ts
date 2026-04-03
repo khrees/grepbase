@@ -287,11 +287,30 @@ export async function fetchRepoBranches(
     const [repoDetails, branchData] = await Promise.all([
         fetchRepository(owner, repo),
         (async () => {
-            const url = new URL(`${buildRepoApiBase(owner, repo)}/branches`);
-            url.searchParams.set('per_page', '100');
-            const response = await fetchWithTimeout(url.toString(), { headers: getGitHubHeaders() });
-            if (!response.ok) throwGitHubError(response, 'Failed to fetch branches');
-            return response.json() as Promise<Array<{ name: string }>>;
+            const allBranches: Array<{ name: string }> = [];
+            let page = 1;
+            
+            // Loop up to 10 pages (1000 branches) to prevent infinite loops
+            while (page <= 10) {
+                const url = new URL(`${buildRepoApiBase(owner, repo)}/branches`);
+                url.searchParams.set('per_page', '100');
+                url.searchParams.set('page', String(page));
+                
+                const response = await fetchWithTimeout(url.toString(), { headers: getGitHubHeaders() });
+                if (!response.ok) throwGitHubError(response, 'Failed to fetch branches');
+                
+                const data = await response.json() as Array<{ name: string }>;
+                allBranches.push(...data);
+                
+                if (data.length < 100) break;
+                
+                // We also check the Link header to be sure there's another page
+                const linkHeader = response.headers.get('link');
+                if (!linkHeader || !linkHeader.includes('rel="next"')) break;
+                
+                page++;
+            }
+            return allBranches;
         })(),
     ]);
 

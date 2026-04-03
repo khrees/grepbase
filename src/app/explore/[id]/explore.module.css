@@ -408,7 +408,8 @@
     font-weight: 600;
     color: var(--text-muted);
     cursor: pointer;
-    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     transition: color var(--transition-fast), background var(--transition-fast);
 }
 
@@ -503,6 +504,25 @@
     background: var(--bg-primary);
     display: flex;
     flex-direction: column;
+}
+
+.codeViewerWrapper {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+}
+
+.codeLoadingOverlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(1px);
+    pointer-events: none;
 }
 
 .fileList {
@@ -716,6 +736,46 @@
 
 .diffDel {
     color: #f85149;
+}
+
+/* Diff status badge */
+.diffStatusBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.diffStatusAdded    { background: rgba(63, 185, 80, 0.12);  color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.22); }
+.diffStatusModified { background: rgba(255, 166, 0, 0.10);  color: #e3b341; border: 1px solid rgba(255, 166, 0, 0.20); }
+.diffStatusRemoved  { background: rgba(248, 81, 73, 0.12);  color: #f85149; border: 1px solid rgba(248, 81, 73, 0.22); }
+.diffStatusRenamed  { background: rgba(88, 166, 255, 0.10); color: #58a6ff; border: 1px solid rgba(88, 166, 255, 0.20); }
+
+/* Stat pills for additions / deletions */
+.diffStatPill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+}
+
+.diffStatAdd {
+    background: rgba(63, 185, 80, 0.10);
+    color: #3fb950;
+    border: 1px solid rgba(63, 185, 80, 0.18);
+}
+
+.diffStatDel {
+    background: rgba(248, 81, 73, 0.10);
+    color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 0.18);
 }
 
 .compareSummary {

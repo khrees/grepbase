@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import styles from './StoryModePanel.module.css';
-import { getAISettings } from './SettingsModal';
+import { getAISettings } from '@/stores/settings-store';
 import { api } from '@/lib/api-client';
 import type { Commit, Repository } from '@/types';
 
@@ -118,20 +118,17 @@ export default function StoryModePanel({
         }
     }, [commits, repository.id]);
 
-    // Auto-generate when chapter changes
+    // Auto-generate when chapter changes (cleanup aborts on unmount too)
     useEffect(() => {
         if (commits.length === 0) return;
         generateChapter(chapterIndex);
+        return () => { abortControllerRef.current?.abort(); };
     }, [chapterIndex, commits.length, generateChapter]);
-
-    // Cleanup on unmount
-    useEffect(() => () => { abortControllerRef.current?.abort(); }, []);
 
     function goToPrevChapter() {
         if (chapterIndex <= 0) return;
         const next = chapterIndex - 1;
         setChapterIndex(next);
-        // Navigate explorer to last commit of that chapter
         onNavigateToCommit(chapterRange(next, commits.length).end);
     }
 
