@@ -236,20 +236,24 @@ export async function fetchCommitHistoryPage(
     owner: string,
     repo: string,
     page: number,
-    perPage: number = GITHUB.MAX_COMMITS_PER_REQUEST
+    perPage: number = GITHUB.MAX_COMMITS_PER_REQUEST,
+    branch?: string
 ): Promise<GitHubCommit[]> {
     const safePage = Math.max(1, page);
     const safePerPage = Math.min(
         GITHUB.MAX_COMMITS_PER_REQUEST,
         Math.max(1, perPage)
     );
-    const cacheKey = `commits-page:${owner}:${repo}:${safePage}:${safePerPage}`;
+    const cacheKey = `commits-page:${owner}:${repo}:${safePage}:${safePerPage}${branch ? `:${branch}` : ''}`;
     const cached = await cache.get<GitHubCommit[]>(cacheKey);
     if (cached) return cached;
 
     const commitsUrl = new URL(`${buildRepoApiBase(owner, repo)}/commits`);
     commitsUrl.searchParams.set('per_page', String(safePerPage));
     commitsUrl.searchParams.set('page', String(safePage));
+    if (branch) {
+        commitsUrl.searchParams.set('sha', branch);
+    }
 
     const response = await fetchWithTimeout(commitsUrl.toString(), {
         headers: getGitHubHeaders(),
@@ -271,6 +275,37 @@ export async function fetchCommitHistoryPage(
 
     await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
     return commits;
+}
+
+/**
+ * Fetch the list of branches for a repository, along with the default branch name.
+ */
+export async function fetchRepoBranches(
+    owner: string,
+    repo: string
+): Promise<{ branches: string[]; defaultBranch: string }> {
+    const cacheKey = `branches:${owner}:${repo}`;
+    const cached = await cache.get<{ branches: string[]; defaultBranch: string }>(cacheKey);
+    if (cached) return cached;
+
+    const [repoDetails, branchData] = await Promise.all([
+        fetchRepository(owner, repo),
+        (async () => {
+            const url = new URL(`${buildRepoApiBase(owner, repo)}/branches`);
+            url.searchParams.set('per_page', '100');
+            const response = await fetchWithTimeout(url.toString(), { headers: getGitHubHeaders() });
+            if (!response.ok) throwGitHubError(response, 'Failed to fetch branches');
+            return response.json() as Promise<Array<{ name: string }>>;
+        })(),
+    ]);
+
+    const result = {
+        branches: branchData.map((b) => b.name),
+        defaultBranch: repoDetails.defaultBranch,
+    };
+
+    await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
+    return result;
 }
 
 /**

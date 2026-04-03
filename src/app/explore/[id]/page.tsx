@@ -17,6 +17,7 @@ import {
     ChevronDown,
     RefreshCw,
     Sparkles,
+    GitBranch,
 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import styles from './explore.module.css';
@@ -103,13 +104,35 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const [ingestProgress, setIngestProgress] = useState(0);
     const [ingestStatus, setIngestStatus] = useState<string | null>(null);
 
+    // Branch switcher
+    const [showBranchMenu, setShowBranchMenu] = useState(false);
+    const [branchList, setBranchList] = useState<string[] | null>(null);
+    const [switchingBranch, setSwitchingBranch] = useState(false);
+
     const commitPrefetchRequestRef = useRef(0);
     const currentIndexRef = useRef(0);
+    const branchMenuRef = useRef<HTMLDivElement>(null);
 
     const currentCommit = commits[currentIndex];
     const currentCommitSha = currentCommit?.sha;
     const repositoryId = repository?.id;
     const commitSelectionKey = useMemo(() => `grepbase:last_commit:${id}`, [id]);
+
+    // Derive the active branch and the base GitHub URL (without @branch suffix)
+    const activeBranch = useMemo(() => {
+        if (!repository) return null;
+        const url = repository.url ?? '';
+        const atIdx = url.lastIndexOf('@');
+        if (atIdx !== -1) return url.slice(atIdx + 1);
+        return repository.defaultBranch || 'main';
+    }, [repository]);
+
+    const baseRepoUrl = useMemo(() => {
+        if (!repository) return '';
+        const url = repository.url ?? '';
+        const atIdx = url.lastIndexOf('@');
+        return atIdx !== -1 ? url.slice(0, atIdx) : url;
+    }, [repository]);
 
     const visibleFilePaths = useMemo(
         () => files
@@ -132,6 +155,71 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         if (compareFiles.length === 0) return null;
         return compareFiles.find(file => file.path === selectedComparePath) || compareFiles[0];
     }, [compareFiles, selectedComparePath]);
+
+    const loadBranches = useCallback(async () => {
+        if (branchList !== null || !baseRepoUrl) return;
+        try {
+            const data = await api.get<{ branches: string[]; defaultBranch: string }>(
+                `/api/repos/branches?url=${encodeURIComponent(baseRepoUrl)}`
+            );
+            setBranchList(data.branches);
+        } catch {
+            setBranchList([]);
+        }
+    }, [baseRepoUrl, branchList]);
+
+    const switchBranch = useCallback(async (branch: string) => {
+        if (!baseRepoUrl || branch === activeBranch || switchingBranch) return;
+        setShowBranchMenu(false);
+        setSwitchingBranch(true);
+
+        try {
+            const isDefault = branch === (repository?.defaultBranch || 'main');
+            const body = isDefault
+                ? { url: baseRepoUrl }
+                : { url: baseRepoUrl, branch };
+
+            const data = await api.post<{
+                jobId?: string;
+                repository?: { id: string };
+                cached?: boolean;
+            }>('/api/repos', body);
+
+            const targetId = data.repository?.id;
+            if (targetId) {
+                router.push(data.jobId
+                    ? `/explore/${targetId}?jobId=${data.jobId}`
+                    : `/explore/${targetId}`
+                );
+            } else if (data.jobId) {
+                // Poll until repoId resolves
+                let attempts = 0;
+                const poll = async (): Promise<void> => {
+                    attempts++;
+                    const job = await api.get<{ status: string; repoId?: string; repository?: { id: string } }>(
+                        `/api/jobs/${data.jobId}`
+                    );
+                    const resolvedId = job.repository?.id ?? job.repoId;
+                    if (resolvedId) {
+                        router.push(`/explore/${resolvedId}?jobId=${data.jobId}`);
+                    } else if (job.status === 'failed') {
+                        fireToast('Failed to load branch', 'error');
+                        setSwitchingBranch(false);
+                    } else if (attempts < 30) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        return poll();
+                    } else {
+                        fireToast('Branch load timed out', 'error');
+                        setSwitchingBranch(false);
+                    }
+                };
+                await poll();
+            }
+        } catch (err) {
+            fireToast(err instanceof Error ? err.message : 'Failed to switch branch', 'error');
+            setSwitchingBranch(false);
+        }
+    }, [activeBranch, baseRepoUrl, repository?.defaultBranch, router, switchingBranch]);
 
     const appendUniqueCommits = useCallback((incoming: Commit[]) => {
         if (incoming.length === 0) return;
@@ -529,6 +617,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         if (index < 0 || index >= commits.length) return;
         setCurrentIndex(index);
         setSelectedFile(null);
+        setSidebarTab('files');
     }, [commits.length]);
 
     const goNext = useCallback(() => {
@@ -551,6 +640,18 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             return nextIndex;
         });
     }, []);
+
+    // Close branch menu on outside click
+    useEffect(() => {
+        if (!showBranchMenu) return;
+        function handleClickOutside(e: MouseEvent) {
+            if (branchMenuRef.current && !branchMenuRef.current.contains(e.target as Node)) {
+                setShowBranchMenu(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showBranchMenu]);
 
     useEffect(() => {
         function handleKeyDown(event: KeyboardEvent) {
@@ -715,6 +816,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
     return (
         <div className={styles.container}>
+            {loadingMoreCommits && <div className={styles.fetchingBar} aria-hidden="true" />}
             <header className={styles.header}>
                 <div className={styles.headerLeft}>
                     <Link href="/" className={`btn btn-ghost ${styles.headerHomeBtn}`}>
@@ -725,6 +827,51 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                         <span className={styles.repoName}>
                             {repository.owner}<span className={styles.repoSlash}>/</span>{repository.name}
                         </span>
+                        <div className={styles.branchSwitcher} ref={branchMenuRef}>
+                            <button
+                                className={`${styles.branchBadge} ${showBranchMenu ? styles.branchBadgeOpen : ''}`}
+                                onClick={() => {
+                                    setShowBranchMenu(v => !v);
+                                    loadBranches();
+                                }}
+                                disabled={switchingBranch}
+                                title="Switch branch"
+                            >
+                                {switchingBranch
+                                    ? <Loader2 size={10} className={styles.branchSpinner} />
+                                    : <GitBranch size={10} />
+                                }
+                                <span>{activeBranch}</span>
+                                <ChevronDown size={9} className={styles.branchChevron} />
+                            </button>
+
+                            {showBranchMenu && (
+                                <div className={styles.branchMenu}>
+                                    {branchList === null ? (
+                                        <div className={styles.branchMenuLoading}>
+                                            <Loader2 size={12} className={styles.branchSpinner} />
+                                            <span>Loading…</span>
+                                        </div>
+                                    ) : branchList.length === 0 ? (
+                                        <div className={styles.branchMenuLoading}>
+                                            <span>No branches found</span>
+                                        </div>
+                                    ) : branchList.map(branch => (
+                                        <button
+                                            key={branch}
+                                            className={`${styles.branchMenuItem} ${branch === activeBranch ? styles.branchMenuItemActive : ''}`}
+                                            onClick={() => switchBranch(branch)}
+                                        >
+                                            <GitBranch size={10} />
+                                            <span>{branch}</span>
+                                            {branch === (repository.defaultBranch || 'main') && (
+                                                <span className={styles.branchMenuDefault}>default</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 

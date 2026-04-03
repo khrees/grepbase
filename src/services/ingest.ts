@@ -22,6 +22,8 @@ interface IngestOptions {
     /** Pre-parsed owner/repo — avoids re-parsing the URL inside the worker */
     owner?: string;
     repoName?: string;
+    /** Specific branch to ingest. Omit to use the repository's default branch. */
+    branch?: string;
 }
 
 export async function processRepoIngestion({
@@ -31,6 +33,7 @@ export async function processRepoIngestion({
     db,
     owner: ownerArg,
     repoName: repoNameArg,
+    branch,
 }: IngestOptions): Promise<void> {
     const processLogger = logger.child({ jobId, url, clientId, worker: true });
 
@@ -142,7 +145,7 @@ export async function processRepoIngestion({
         while (processedCommits < maxCommits) {
             const remaining = maxCommits - processedCommits;
             const pageSize = Math.min(PER_PAGE, remaining);
-            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize);
+            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize, branch);
 
             if (pageCommits.length === 0) {
                 expectedCommits = Math.max(1, processedCommits);

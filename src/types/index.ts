@@ -8,6 +8,8 @@ export interface Repository {
     owner: string;
     description: string | null;
     readme: string | null;
+    url: string;
+    defaultBranch: string | null;
 }
 
 export interface Commit {

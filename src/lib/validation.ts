@@ -89,6 +89,7 @@ export const explainRequestSchema = z.object({
 // Repository ingest request
 export const ingestRepoSchema = z.object({
     url: githubUrlSchema,
+    branch: z.string().min(1).max(255).optional(),
 });
 
 // Pagination params

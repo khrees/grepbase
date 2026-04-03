@@ -5,6 +5,30 @@
     overflow: hidden;
 }
 
+/* Background-fetch progress bar */
+.fetchingBar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    z-index: 200;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--accent-primary) 40%,
+        rgba(0, 164, 255, 0.9) 60%,
+        transparent 100%
+    );
+    background-size: 60% 100%;
+    animation: fetchSweep 1.6s ease-in-out infinite;
+}
+
+@keyframes fetchSweep {
+    0%   { background-position: -100% 0; }
+    100% { background-position: 220% 0; }
+}
+
 /* ─── Header ───────────────────────────────────────────────────────── */
 .header {
     display: flex;
@@ -69,6 +93,142 @@
     color: var(--text-muted);
     font-weight: 400;
     margin: 0 1px;
+}
+
+/* ─── Branch switcher ────────────────────────────────────────────── */
+.branchSwitcher {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-left: 4px;
+}
+
+.branchBadge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    height: 20px;
+    background: rgba(0, 112, 243, 0.08);
+    border: 1px solid rgba(0, 112, 243, 0.2);
+    border-radius: 999px;
+    color: var(--accent-primary);
+    font-size: 0.68rem;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.branchBadge:hover:not(:disabled) {
+    background: rgba(0, 112, 243, 0.14);
+    border-color: rgba(0, 112, 243, 0.35);
+}
+
+.branchBadgeOpen {
+    background: rgba(0, 112, 243, 0.14);
+    border-color: rgba(0, 112, 243, 0.35);
+}
+
+.branchBadge:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.branchChevron {
+    opacity: 0.6;
+    flex-shrink: 0;
+}
+
+.branchSpinner {
+    animation: branchSpin 0.8s linear infinite;
+}
+
+@keyframes branchSpin {
+    to { transform: rotate(360deg); }
+}
+
+.branchMenu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 100;
+    min-width: 180px;
+    max-width: 280px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    animation: branchMenuIn 120ms ease;
+}
+
+@keyframes branchMenuIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.branchMenuLoading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.branchMenuItem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    overflow: hidden;
+}
+
+.branchMenuItem span:nth-child(2) {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.branchMenuItem:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+.branchMenuItemActive {
+    background: rgba(0, 112, 243, 0.08);
+    border-color: rgba(0, 112, 243, 0.18);
+    color: var(--accent-primary);
+}
+
+.branchMenuItemActive:hover {
+    background: rgba(0, 112, 243, 0.12);
+    color: var(--accent-primary);
+}
+
+.branchMenuDefault {
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    flex-shrink: 0;
 }
 
 /* Header center — commit nav */

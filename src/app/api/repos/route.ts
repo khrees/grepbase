@@ -177,14 +177,16 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { url } = parseResult.data;
+        const { url, branch } = parseResult.data;
         const sanitizedUrl = sanitizeGitHubUrl(url);
         const { owner, repo: repoName } = parseGitHubUrl(sanitizedUrl);
-        requestLogger.info({ owner, repo: repoName, sessionId: session.sessionId }, 'Processing repository ingest');
+        // Non-default branches get their own DB entry keyed by URL@branch
+        const repoKey = branch ? `${sanitizedUrl}@${branch}` : sanitizedUrl;
+        requestLogger.info({ owner, repo: repoName, branch, sessionId: session.sessionId }, 'Processing repository ingest');
 
         const existingRepoResult = await db.select()
             .from(repositories)
-            .where(eq(repositories.url, sanitizedUrl))
+            .where(eq(repositories.url, repoKey))
             .limit(1);
 
         if (existingRepoResult.length > 0) {
@@ -224,7 +226,7 @@ export async function POST(request: NextRequest) {
             const now = new Date();
             await db.insert(ingestJobs).values({
                 jobId,
-                url: sanitizedUrl,
+                url: repoKey,
                 status: 'pending',
                 progress: 0,
                 createdAt: now,
@@ -235,11 +237,12 @@ export async function POST(request: NextRequest) {
 
             const ingestionPromise = processRepoIngestion({
                 jobId,
-                url: sanitizedUrl,
+                url: repoKey,
                 clientId: session.sessionId,
                 db,
                 owner,
                 repoName,
+                branch,
             }).catch((err) => {
                 logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
             });
@@ -296,7 +299,7 @@ export async function POST(request: NextRequest) {
         const activeUrlJobResult = await db.select()
             .from(ingestJobs)
             .where(and(
-                eq(ingestJobs.url, sanitizedUrl),
+                eq(ingestJobs.url, repoKey),
                 inArray(ingestJobs.status, ACTIVE_JOB_STATUSES)
             ))
             .orderBy(desc(ingestJobs.updatedAt))
@@ -335,7 +338,7 @@ export async function POST(request: NextRequest) {
         const now = new Date();
         await db.insert(ingestJobs).values({
             jobId,
-            url: sanitizedUrl,
+            url: repoKey,
             status: 'pending',
             progress: 0,
             createdAt: now,
@@ -345,7 +348,7 @@ export async function POST(request: NextRequest) {
 
         const newRepoResult = await db.select()
             .from(repositories)
-            .where(eq(repositories.url, sanitizedUrl))
+            .where(eq(repositories.url, repoKey))
             .limit(1);
         if (newRepoResult.length > 0) {
             await safeGrantRepoAccess(newRepoResult[0].id, session.sessionId);
@@ -353,11 +356,12 @@ export async function POST(request: NextRequest) {
 
         const ingestionPromise = processRepoIngestion({
             jobId,
-            url: sanitizedUrl,
+            url: repoKey,
             clientId: session.sessionId,
             db,
             owner,
             repoName,
+            branch,
         }).catch((err) => {
             logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
         });
