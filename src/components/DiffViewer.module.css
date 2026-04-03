@@ -60,14 +60,16 @@
 
 .splitRow {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .splitCell {
     margin: 0;
     padding: 0 var(--space-md);
     min-height: 20px;
+    min-width: 0;
     white-space: pre;
+    overflow-x: auto;
     font-family: var(--font-mono);
     font-size: 0.8rem;
     line-height: 1.5;

@@ -82,21 +82,15 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const [centerView, setCenterView] = useState<CenterView>('code');
     const [diffViewMode, setDiffViewMode] = useState<'unified' | 'split'>('unified');
 
-    const [commitDiffFiles, setCommitDiffFiles] = useState<DiffFileData[]>([]);
+    const [commitDiffFile, setCommitDiffFile] = useState<DiffFileData | null>(null);
     const [commitDiffLoading, setCommitDiffLoading] = useState(false);
     const [commitDiffError, setCommitDiffError] = useState<string | null>(null);
-    const [selectedCommitDiffPath, setSelectedCommitDiffPath] = useState('');
 
     const [compareBaseSha, setCompareBaseSha] = useState('');
     const [compareHeadSha, setCompareHeadSha] = useState('');
-    const [compareFiles, setCompareFiles] = useState<DiffFileData[]>([]);
-    const [compareStatus, setCompareStatus] = useState('unknown');
-    const [compareTotalFiles, setCompareTotalFiles] = useState(0);
-    const [compareAheadBy, setCompareAheadBy] = useState(0);
-    const [compareBehindBy, setCompareBehindBy] = useState(0);
+    const [compareFile, setCompareFile] = useState<DiffFileData | null>(null);
     const [compareLoading, setCompareLoading] = useState(false);
     const [compareError, setCompareError] = useState<string | null>(null);
-    const [selectedComparePath, setSelectedComparePath] = useState('');
     const [pendingCommitSha, setPendingCommitSha] = useState<string | null>(null);
     const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
     const [waitingForInitialCommits, setWaitingForInitialCommits] = useState(false);
@@ -140,20 +134,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         [files]
     );
 
-    const selectedCommitDiffFile = useMemo(() => {
-        if (commitDiffFiles.length === 0) return null;
-        return commitDiffFiles.find(file => file.path === selectedCommitDiffPath) || commitDiffFiles[0];
-    }, [commitDiffFiles, selectedCommitDiffPath]);
-
     const orderedCommits = useMemo(
         () => commitOrder === 'asc' ? commits : [...commits].reverse(),
         [commits, commitOrder]
     );
-
-    const selectedCompareFile = useMemo(() => {
-        if (compareFiles.length === 0) return null;
-        return compareFiles.find(file => file.path === selectedComparePath) || compareFiles[0];
-    }, [compareFiles, selectedComparePath]);
 
     const loadBranches = useCallback(async () => {
         if (branchList !== null || !baseRepoUrl) return;
@@ -682,6 +666,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     useEffect(() => {
         if (!currentCommit?.sha) return;
         if (centerView !== 'diff' || diffScope !== 'commit') return;
+        if (!selectedFile) {
+            setCommitDiffFile(null);
+            return;
+        }
 
         let cancelled = false;
 
@@ -690,20 +678,14 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             setCommitDiffError(null);
 
             try {
-                const data = await api.get<CommitDiffResponse>(`/api/repos/${id}/commits/${currentCommit.sha}/diff`);
+                const url = `/api/repos/${id}/commits/${currentCommit.sha}/diff?path=${encodeURIComponent(selectedFile!.path)}`;
+                const data = await api.get<CommitDiffResponse>(url);
                 if (cancelled) return;
 
-                const filesChanged = data.files || [];
-                setCommitDiffFiles(filesChanged);
-                setSelectedCommitDiffPath(prev => {
-                    if (prev && filesChanged.some(file => file.path === prev)) {
-                        return prev;
-                    }
-                    return filesChanged[0]?.path || '';
-                });
+                setCommitDiffFile(data.files?.[0] ?? null);
             } catch (err) {
                 if (!cancelled) {
-                    setCommitDiffFiles([]);
+                    setCommitDiffFile(null);
                     setCommitDiffError(err instanceof Error ? err.message : 'Failed to load commit diff');
                 }
             } finally {
@@ -718,7 +700,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return () => {
             cancelled = true;
         };
-    }, [centerView, currentCommit?.sha, diffScope, id]);
+    }, [centerView, currentCommit?.sha, diffScope, id, selectedFile]);
 
     useEffect(() => {
         if (commits.length === 0) return;
@@ -733,6 +715,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     useEffect(() => {
         if (centerView !== 'diff' || diffScope !== 'compare') return;
         if (!compareBaseSha || !compareHeadSha) return;
+        if (!selectedFile) {
+            setCompareFile(null);
+            return;
+        }
 
         let cancelled = false;
 
@@ -741,26 +727,15 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             setCompareError(null);
 
             try {
-                const data = await api.get<CompareDiffResponse>(
-                    `/api/repos/${id}/compare?base=${encodeURIComponent(compareBaseSha)}&head=${encodeURIComponent(compareHeadSha)}`
-                );
+                const url = `/api/repos/${id}/compare?base=${encodeURIComponent(compareBaseSha)}&head=${encodeURIComponent(compareHeadSha)}&path=${encodeURIComponent(selectedFile!.path)}`;
+                const data = await api.get<CompareDiffResponse>(url);
 
                 if (cancelled) return;
 
-                setCompareFiles(data.files || []);
-                setCompareStatus(data.status || 'unknown');
-                setCompareTotalFiles(data.totalFiles || data.files.length || 0);
-                setCompareAheadBy(data.aheadBy || 0);
-                setCompareBehindBy(data.behindBy || 0);
-                setSelectedComparePath(prev => {
-                    if (prev && data.files.some(file => file.path === prev)) {
-                        return prev;
-                    }
-                    return data.files[0]?.path || '';
-                });
+                setCompareFile(data.files?.[0] ?? null);
             } catch (err) {
                 if (!cancelled) {
-                    setCompareFiles([]);
+                    setCompareFile(null);
                     setCompareError(err instanceof Error ? err.message : 'Failed to compare commits');
                 }
             } finally {
@@ -775,7 +750,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return () => {
             cancelled = true;
         };
-    }, [centerView, compareBaseSha, compareHeadSha, diffScope, id]);
+    }, [centerView, compareBaseSha, compareHeadSha, diffScope, id, selectedFile]);
 
     if (loading) {
         return (
@@ -982,13 +957,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         files={files}
                                         selectedFile={selectedFile}
                                         onSelectFile={(file) => {
-                                            if (centerView === 'diff') {
-                                                if (commitDiffFiles.some(f => f.path === file.path)) {
-                                                    setSelectedCommitDiffPath(file.path);
-                                                    return;
-                                                }
-                                                setCenterView('code');
-                                            }
                                             void selectFile(file);
                                         }}
                                     />
@@ -1033,12 +1001,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                             </button>
                             <button
                                 className={`${styles.viewTab} ${centerView === 'diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => {
-                                    setCenterView('diff');
-                                    if (selectedFile && commitDiffFiles.some(f => f.path === selectedFile.path)) {
-                                        setSelectedCommitDiffPath(selectedFile.path);
-                                    }
-                                }}
+                                onClick={() => setCenterView('diff')}
                             >
                                 Diff
                             </button>
@@ -1095,20 +1058,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
                                             {diffScope === 'commit' ? (
                                                 <div className={styles.diffToolbarControls}>
-                                                    <select
-                                                        value={selectedCommitDiffPath}
-                                                        onChange={event => setSelectedCommitDiffPath(event.target.value)}
-                                                        disabled={commitDiffFiles.length === 0}
-                                                    >
-                                                        {commitDiffFiles.length === 0 && <option value="">No changed files</option>}
-                                                        {commitDiffFiles.map(file => (
-                                                            <option key={file.path} value={file.path}>
-                                                                {file.path}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                    <span className={styles.diffStats}>
-                                                        {commitDiffFiles.length} file{commitDiffFiles.length === 1 ? '' : 's'}
+                                                    <span className={styles.diffFileName}>
+                                                        {selectedFile
+                                                            ? selectedFile.path.split('/').pop()
+                                                            : 'No file selected'}
                                                     </span>
                                                 </div>
                                             ) : (
@@ -1123,6 +1076,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                             ))}
                                                         </select>
                                                     </label>
+                                                    <span className={styles.diffRange}>...</span>
                                                     <label className={styles.diffSelectLabel}>
                                                         Head
                                                         <select value={compareHeadSha} onChange={event => setCompareHeadSha(event.target.value)}>
@@ -1130,19 +1084,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                                 <option key={`head-${commit.sha}`} value={commit.sha}>
                                                                     {index + 1}. {commit.sha.slice(0, 7)} — {commit.message.split('\n')[0].slice(0, 40)}
                                                                 </option>
-                                                            ))}
-                                                        </select>
-                                                    </label>
-                                                    <label className={styles.diffSelectLabel}>
-                                                        File
-                                                        <select
-                                                            value={selectedComparePath}
-                                                            onChange={event => setSelectedComparePath(event.target.value)}
-                                                            disabled={compareFiles.length === 0}
-                                                        >
-                                                            {compareFiles.length === 0 && <option value="">No changed files</option>}
-                                                            {compareFiles.map(file => (
-                                                                <option key={file.path} value={file.path}>{file.path}</option>
                                                             ))}
                                                         </select>
                                                     </label>
@@ -1166,70 +1107,70 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         </div>
 
                                         {diffScope === 'commit' ? (
-                                            commitDiffLoading ? (
+                                            !selectedFile ? (
+                                                <div className={styles.noFile}>
+                                                    <h3>No file selected</h3>
+                                                    <p>Select a file from the tree to view its diff.</p>
+                                                </div>
+                                            ) : commitDiffLoading ? (
                                                 <div className={styles.loadingFiles}>
                                                     <Loader2 size={24} className={styles.spinner} />
                                                     <p>Loading diff...</p>
                                                 </div>
                                             ) : commitDiffError ? (
                                                 <div className={styles.errorInline}>{commitDiffError}</div>
-                                            ) : selectedCommitDiffFile ? (
+                                            ) : commitDiffFile ? (
                                                 <>
                                                     <div className={styles.diffMeta}>
-                                                        <span>{selectedCommitDiffFile.status}</span>
-                                                        <span className={styles.diffAdd}>+{selectedCommitDiffFile.additions}</span>
-                                                        <span className={styles.diffDel}>-{selectedCommitDiffFile.deletions}</span>
+                                                        <span>{commitDiffFile.status}</span>
+                                                        <span className={styles.diffAdd}>+{commitDiffFile.additions}</span>
+                                                        <span className={styles.diffDel}>-{commitDiffFile.deletions}</span>
                                                     </div>
-                                                    <DiffViewer patch={selectedCommitDiffFile.patch} mode={diffViewMode} />
+                                                    <DiffViewer patch={commitDiffFile.patch} mode={diffViewMode} />
                                                 </>
                                             ) : (
                                                 <div className={styles.noFile}>
-                                                    <h3>No diff available</h3>
-                                                    <p>This commit has no textual file changes.</p>
+                                                    <h3>No changes in this commit</h3>
+                                                    <p>This file was not modified in this commit.</p>
                                                 </div>
                                             )
                                         ) : (
-                                            <>
-                                                {compareStatus !== 'unknown' && (
-                                                    <div className={styles.compareSummary}>
-                                                        <span>{compareStatus}</span>
-                                                        <span>{compareTotalFiles} files</span>
-                                                        <span>+{compareAheadBy}</span>
-                                                        <span>-{compareBehindBy}</span>
+                                            !selectedFile ? (
+                                                <div className={styles.noFile}>
+                                                    <h3>No file selected</h3>
+                                                    <p>Select a file from the tree to compare.</p>
+                                                </div>
+                                            ) : compareLoading ? (
+                                                <div className={styles.loadingFiles}>
+                                                    <Loader2 size={24} className={styles.spinner} />
+                                                    <p>Comparing commits...</p>
+                                                </div>
+                                            ) : compareError ? (
+                                                <div className={styles.errorInline}>{compareError}</div>
+                                            ) : compareBaseSha === compareHeadSha ? (
+                                                <div className={styles.noFile}>
+                                                    <h3>Same commit selected</h3>
+                                                    <p>Select two different commits to compare.</p>
+                                                </div>
+                                            ) : compareFile ? (
+                                                <>
+                                                    <div className={styles.diffMeta}>
+                                                        <span>{compareFile.status}</span>
+                                                        <span className={styles.diffAdd}>+{compareFile.additions}</span>
+                                                        <span className={styles.diffDel}>-{compareFile.deletions}</span>
                                                     </div>
-                                                )}
-                                                {compareLoading ? (
-                                                    <div className={styles.loadingFiles}>
-                                                        <Loader2 size={24} className={styles.spinner} />
-                                                        <p>Comparing commits...</p>
-                                                    </div>
-                                                ) : compareError ? (
-                                                    <div className={styles.errorInline}>{compareError}</div>
-                                                ) : compareBaseSha === compareHeadSha ? (
-                                                    <div className={styles.noFile}>
-                                                        <h3>Same commit selected</h3>
-                                                        <p>Select two different commits to compare.</p>
-                                                    </div>
-                                                ) : selectedCompareFile ? (
-                                                    <>
-                                                        <div className={styles.diffMeta}>
-                                                            <span>{selectedCompareFile.status}</span>
-                                                            <span className={styles.diffAdd}>+{selectedCompareFile.additions}</span>
-                                                            <span className={styles.diffDel}>-{selectedCompareFile.deletions}</span>
-                                                        </div>
-                                                        <DiffViewer
-                                                            patch={selectedCompareFile.patch}
-                                                            mode={diffViewMode}
-                                                            emptyMessage="This file did not change textually between the selected commits."
-                                                        />
-                                                    </>
-                                                ) : (
-                                                    <div className={styles.noFile}>
-                                                        <h3>No changed files in this range</h3>
-                                                        <p>Try a different commit pair.</p>
-                                                    </div>
-                                                )}
-                                            </>
+                                                    <DiffViewer
+                                                        patch={compareFile.patch}
+                                                        mode={diffViewMode}
+                                                        emptyMessage="This file did not change textually between the selected commits."
+                                                    />
+                                                </>
+                                            ) : (
+                                                <div className={styles.noFile}>
+                                                    <h3>No changes in this range</h3>
+                                                    <p>This file was not modified between the selected commits.</p>
+                                                </div>
+                                            )
                                         )}
                                     </div>
                                 )}

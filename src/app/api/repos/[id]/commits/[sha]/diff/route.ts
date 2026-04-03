@@ -7,6 +7,7 @@ import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchCommitFileDiffs } from '@/services/github';
+import { isSafeFilePath } from '@/lib/sanitize';
 
 export async function GET(
     request: NextRequest,
@@ -37,6 +38,12 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });
         }
 
+        const filePathParam = request.nextUrl.searchParams.get('path');
+        const filePath = filePathParam?.trim() || null;
+        if (filePath && !isSafeFilePath(filePath)) {
+            return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
+        }
+
         try {
             const repoAccess = await hasRepoAccess(repoId, session.sessionId);
             if (!repoAccess) {
@@ -59,16 +66,19 @@ export async function GET(
             return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
         }
 
-        const changedFiles = await fetchCommitFileDiffs(repo[0].owner, repo[0].name, sha);
-        const totalAdditions = changedFiles.reduce((sum, file) => sum + file.additions, 0);
-        const totalDeletions = changedFiles.reduce((sum, file) => sum + file.deletions, 0);
+        const allChangedFiles = await fetchCommitFileDiffs(repo[0].owner, repo[0].name, sha);
+        const filteredFiles = filePath
+            ? allChangedFiles.filter(file => file.path === filePath || file.previousPath === filePath)
+            : allChangedFiles;
+        const totalAdditions = filteredFiles.reduce((sum, file) => sum + file.additions, 0);
+        const totalDeletions = filteredFiles.reduce((sum, file) => sum + file.deletions, 0);
 
         return applyPrivateNoStoreHeaders(
             NextResponse.json({
                 commit: commit[0],
-                files: changedFiles,
+                files: filteredFiles,
                 stats: {
-                    changedFiles: changedFiles.length,
+                    changedFiles: filteredFiles.length,
                     additions: totalAdditions,
                     deletions: totalDeletions,
                 },

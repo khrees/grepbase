@@ -594,6 +594,27 @@
     flex-wrap: wrap;
 }
 
+.diffFileName {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.diffNoFile {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.diffRange {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 0 4px;
+}
+
 .diffSelectLabel {
     display: flex;
     flex-direction: column;
@@ -634,6 +655,16 @@
     color: var(--text-muted);
     white-space: nowrap;
     font-family: var(--font-mono);
+}
+
+.diffFileName {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
 }
 
 .diffModeToggle {
