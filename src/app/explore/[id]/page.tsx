@@ -16,7 +16,6 @@ import {
     Minimize2,
     ChevronDown,
     RefreshCw,
-    Sparkles,
     GitBranch,
 } from 'lucide-react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
@@ -475,6 +474,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 setSelectedFile(updatedFile);
             }
         } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes('rate limit exceeded')) {
+                fireToast('GitHub rate limit reached. Please wait and try again.', 'error', 6000);
+            }
             console.error('Failed to fetch file content:', err);
         } finally {
             setLoadingContent(false);
@@ -502,6 +505,10 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 }
             } catch (err) {
                 if (!cancelled) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    if (msg.includes('rate limit exceeded')) {
+                        fireToast('GitHub rate limit reached. Please wait and try again.', 'error', 6000);
+                    }
                     console.error('Failed to fetch files:', err);
                 }
             } finally {
@@ -711,7 +718,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return () => {
             cancelled = true;
         };
-    }, [centerView, currentCommit?.sha, id]);
+    }, [centerView, currentCommit?.sha, diffScope, id]);
 
     useEffect(() => {
         if (commits.length === 0) return;
@@ -768,7 +775,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return () => {
             cancelled = true;
         };
-    }, [centerView, compareBaseSha, compareHeadSha, id]);
+    }, [centerView, compareBaseSha, compareHeadSha, diffScope, id]);
 
     if (loading) {
         return (
@@ -974,7 +981,16 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     <FileTree
                                         files={files}
                                         selectedFile={selectedFile}
-                                        onSelectFile={selectFile}
+                                        onSelectFile={(file) => {
+                                            if (centerView === 'diff') {
+                                                if (commitDiffFiles.some(f => f.path === file.path)) {
+                                                    setSelectedCommitDiffPath(file.path);
+                                                    return;
+                                                }
+                                                setCenterView('code');
+                                            }
+                                            void selectFile(file);
+                                        }}
                                     />
                                 )}
                             </div>
@@ -1017,7 +1033,12 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                             </button>
                             <button
                                 className={`${styles.viewTab} ${centerView === 'diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('diff')}
+                                onClick={() => {
+                                    setCenterView('diff');
+                                    if (selectedFile && commitDiffFiles.some(f => f.path === selectedFile.path)) {
+                                        setSelectedCommitDiffPath(selectedFile.path);
+                                    }
+                                }}
                             >
                                 Diff
                             </button>
@@ -1218,6 +1239,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         repository={repository}
                                         commits={commits}
                                         currentIndex={currentIndex}
+                                        onNavigateToCommit={goToCommit}
                                     />
                                 )}
                             </div>
@@ -1244,9 +1266,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                 </button>
                                 {aiPanelExpanded ? (
                                     <>
-                                        <div className={styles.panelHeader}>
-                                            <h3 className={styles.panelTitle}>AI Analysis</h3>
-                                        </div>
                                         <div className={styles.aiPanelWrapper}>
                                             <AIPanel
                                                 repository={repository}

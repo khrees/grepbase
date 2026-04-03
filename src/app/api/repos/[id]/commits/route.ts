@@ -69,7 +69,7 @@ export async function GET(
                 await safeGrantRepoAccess(repoId, session.sessionId);
                 requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
             }
-        } catch (accessError) {
+        } catch {
             // Access control system unavailable - allow access to existing repos
             requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
         }

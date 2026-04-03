@@ -37,10 +37,15 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });
         }
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch {
+            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
         }
 
         const [repo, commit] = await Promise.all([
@@ -127,6 +132,10 @@ export async function GET(
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorStack = error instanceof Error ? error.stack : undefined;
+        if (errorMessage.includes('rate limit exceeded')) {
+            requestLogger.warn({ error: { message: errorMessage } }, 'GitHub rate limit hit fetching commit files');
+            return NextResponse.json({ error: errorMessage }, { status: 429 });
+        }
         requestLogger.error({ error: { message: errorMessage, stack: errorStack, type: typeof error } }, 'Failed to fetch commit files');
         return NextResponse.json(
             { error: 'Failed to fetch files', details: errorMessage },

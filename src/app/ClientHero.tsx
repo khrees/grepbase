@@ -39,15 +39,27 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
 
     useEffect(() => {
         try {
-            const stored = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
-            setRecentRepos(Array.isArray(stored) ? stored : []);
+            const stored: RecentRepo[] = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
+            if (!Array.isArray(stored)) return;
+            // Deduplicate by owner/name, keeping the most recent entry
+            const seen = new Set<string>();
+            const deduped = stored.filter(r => {
+                const key = `${r.owner}/${r.name}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+            if (deduped.length !== stored.length) {
+                localStorage.setItem(RECENT_KEY, JSON.stringify(deduped));
+            }
+            setRecentRepos(deduped);
         } catch { /* ignore */ }
     }, []);
 
     function saveRecentRepo(id: string, owner: string, name: string) {
         try {
             const existing: RecentRepo[] = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]');
-            const filtered = existing.filter(r => r.id !== id);
+            const filtered = existing.filter(r => r.id !== id && !(r.owner === owner && r.name === name));
             const updated = [{ id, owner, name, visitedAt: Date.now() }, ...filtered].slice(0, 6);
             localStorage.setItem(RECENT_KEY, JSON.stringify(updated));
             setRecentRepos(updated);
@@ -157,7 +169,6 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
         };
 
         await poll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [router]);
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {

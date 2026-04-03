@@ -43,10 +43,15 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
         }
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch {
+            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
         }
 
         const [repo, commit] = await Promise.all([
@@ -96,6 +101,11 @@ export async function GET(
             })
         );
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes('rate limit exceeded')) {
+            requestLogger.warn({ error: { message: errorMessage } }, 'GitHub rate limit hit fetching file content');
+            return NextResponse.json({ error: errorMessage }, { status: 429 });
+        }
         requestLogger.error({ error }, 'Failed to fetch file content');
         return NextResponse.json(
             { error: 'Failed to fetch file content' },

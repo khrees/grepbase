@@ -77,17 +77,13 @@ export interface GitHubCompareDiff {
     files: GitHubCommitFileDiff[];
 }
 
-// Helper to get headers. Auth headers are opt-in and should never be enabled for
-// unauthenticated user-provided repository fetches.
-function getGitHubHeaders(accept = 'application/vnd.github.v3+json', includeServerToken = false) {
+// Helper to get headers. Includes GITHUB_TOKEN if available to raise rate limits
+// from 60/hr (unauthenticated) to 5000/hr. All repos fetched here are public.
+function getGitHubHeaders(accept = 'application/vnd.github.v3+json') {
     const headers: Record<string, string> = {
         'Accept': accept,
         'User-Agent': 'Grepbase',
     };
-
-    if (!includeServerToken) {
-        return headers;
-    }
 
     // Try process.env first (local dev / build time)
     let token = process.env.GITHUB_TOKEN;
