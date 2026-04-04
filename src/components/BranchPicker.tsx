@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { GitBranch, Loader2, ArrowRight, Check } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { GitBranch, Loader2, ArrowRight, Check, Search } from 'lucide-react';
 import styles from './BranchPicker.module.css';
 import { api } from '@/lib/api-client';
 import { useBranches } from '@/hooks/use-branches';
@@ -28,9 +28,30 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
     const [selected, setSelected] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
+
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedQuery(searchQuery), 200);
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
 
     // Auto-select default branch when data arrives
     const effectiveSelected = selected ?? defaultBranch;
+
+    // Sort default branch first, then filter by search
+    const sortedBranches = branches
+        ? [
+            ...(defaultBranch && branches.includes(defaultBranch) ? [defaultBranch] : []),
+            ...branches.filter(b => b !== defaultBranch),
+          ]
+        : null;
+
+    const filteredBranches = sortedBranches
+        ? debouncedQuery
+            ? sortedBranches.filter(b => b.toLowerCase().includes(debouncedQuery.toLowerCase()))
+            : sortedBranches
+        : null;
 
     async function handleConfirm() {
         const isDefault = !effectiveSelected || effectiveSelected === defaultBranch;
@@ -68,15 +89,30 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
                 <span className={styles.repoSlug}>{owner}/{repo}</span>
             </div>
 
+            {!isLoadingBranches && sortedBranches && sortedBranches.length > 0 && (
+                <div className={styles.searchRow}>
+                    <Search size={12} className={styles.searchIcon} />
+                    <input
+                        className={styles.searchInput}
+                        type="text"
+                        placeholder="Filter branches…"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                    />
+                </div>
+            )}
+
             <div className={styles.body}>
                 {isLoadingBranches ? (
                     <div className={styles.loading}>
                         <Loader2 size={14} className={styles.spinner} />
                         <span>Fetching branches&hellip;</span>
                     </div>
-                ) : branches && branches.length > 0 ? (
+                ) : filteredBranches && filteredBranches.length > 0 ? (
                     <div className={styles.branchList}>
-                        {branches.map((branch) => {
+                        {filteredBranches.map((branch) => {
                             const active = branch === effectiveSelected;
                             return (
                                 <button
@@ -97,6 +133,8 @@ export default function BranchPicker({ url, owner, repo, initialJobData, onConfi
                             );
                         })}
                     </div>
+                ) : filteredBranches && filteredBranches.length === 0 && debouncedQuery ? (
+                    <p className={styles.noResults}>No branches match &ldquo;{debouncedQuery}&rdquo;</p>
                 ) : null}
 
                 {error && <p className={styles.error}>{error}</p>}
