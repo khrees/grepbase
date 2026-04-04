@@ -3,6 +3,7 @@
  */
 import { getPlatformEnv } from './platform/context';
 import { logger } from './logger';
+import { shouldFailOpen } from './constants';
 import type { PlatformCache } from './platform/types';
 
 interface RateLimitResult {
@@ -35,21 +36,21 @@ export class RateLimiter {
         windowSeconds: number = 60
     ): Promise<RateLimitResult> {
         const kv = this.getKv();
+        const now = Date.now();
+        const reset = now + windowSeconds * 1000;
 
-        // If KV is not available, allow the request (fail open)
+        // If KV is not available, fail closed in production (deny request)
         if (!kv) {
-            return {
-                success: true,
-                limit,
-                remaining: limit,
-                reset: Date.now() + windowSeconds * 1000,
-            };
+            if (shouldFailOpen(process.env.RATE_LIMIT_FAIL_OPEN)) {
+                logger.warn({ key }, 'Rate limiting disabled: KV unavailable, failing open');
+                return { success: true, limit, remaining: limit, reset };
+            }
+            logger.warn({ key }, 'Rate limiting unavailable: KV not configured, failing closed');
+            return { success: false, limit, remaining: 0, reset };
         }
 
-        const now = Date.now();
         const windowMs = windowSeconds * 1000;
         const windowBucket = Math.floor(now / windowMs);
-        const reset = (windowBucket + 1) * windowMs;
         const rateLimitKey = `ratelimit:${key}:${windowBucket}`;
 
         try {
@@ -86,13 +87,13 @@ export class RateLimiter {
             };
         } catch (error) {
             logger.error({ error, key: rateLimitKey }, 'Rate limit check failed');
-            // Fail open on errors
-            return {
-                success: true,
-                limit,
-                remaining: limit,
-                reset,
-            };
+            // Fail closed on errors in production, fail open in dev
+            if (shouldFailOpen(process.env.RATE_LIMIT_FAIL_OPEN)) {
+                logger.warn({ key: rateLimitKey }, 'Rate limit check error, failing open');
+                return { success: true, limit, remaining: limit, reset };
+            }
+            logger.error({ key: rateLimitKey }, 'Rate limit check error, failing closed');
+            return { success: false, limit, remaining: 0, reset };
         }
     }
 

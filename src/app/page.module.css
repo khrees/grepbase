@@ -19,7 +19,60 @@
 }
 
 .logo {
-    display: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
+
+.eyebrow {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent-primary);
+    margin-bottom: 1.25rem;
+    opacity: 0.85;
+}
+
+.recentSection {
+    width: 100%;
+    max-width: 600px;
+    margin-top: 1.75rem;
+    text-align: left;
+}
+
+.recentLabel {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.recentGrid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.recentCard {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.28rem 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    text-decoration: none;
+    transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
 }
 
 .hero {
@@ -51,6 +104,21 @@
     flex-direction: column;
     align-items: center;
     z-index: 1;
+}
+
+.logoWrapper {
+    margin-bottom: 2rem;
+    color: var(--accent-primary);
+    filter: drop-shadow(0 0 20px rgba(0, 112, 243, 0.3));
+    animation: fadeIn 0.8s ease-out;
+}
+
+.heroLogo {
+    transition: transform 0.3s ease;
+}
+
+.heroLogo:hover {
+    transform: scale(1.05);
 }
 
 .badge {
@@ -187,6 +255,12 @@
 
 .feature {
     display: none;
+}
+
+.recentCard:hover {
+    border-color: rgba(0, 112, 243, 0.35);
+    color: var(--text-secondary);
+    background: rgba(0, 112, 243, 0.06);
 }
 
 .stars {

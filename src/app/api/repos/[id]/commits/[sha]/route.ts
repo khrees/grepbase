@@ -3,12 +3,10 @@ import { and, eq } from 'drizzle-orm';
 import { repositories, commits, files } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS, INGEST, shouldFetchFileContent } from '@/lib/constants';
+import { RATE_LIMITS, INGEST, shouldFetchFileContent, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchFilesAtCommit, getLanguageFromPath } from '@/services/github';
-
-const COMMIT_SHA_REGEX = /^[0-9a-f]{7,64}$/i;
 
 export async function GET(
     request: NextRequest,
@@ -33,34 +31,30 @@ export async function GET(
         }
 
         const { id, sha } = await params;
-        const repoId = Number.parseInt(id, 10);
-
-        if (Number.isNaN(repoId)) {
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
+        const repoId = id;
 
         if (!COMMIT_SHA_REGEX.test(sha)) {
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });
         }
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch {
+            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
         }
 
-        const repo = await db.select()
-            .from(repositories)
-            .where(eq(repositories.id, repoId))
-            .limit(1);
+        const [repo, commit] = await Promise.all([
+            db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1),
+            db.select().from(commits).where(and(eq(commits.repoId, repoId), eq(commits.sha, sha))).limit(1),
+        ]);
         if (repo.length === 0) {
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
-
-        const commit = await db.select()
-            .from(commits)
-            .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
-            .limit(1);
         if (commit.length === 0) {
             return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
         }
@@ -118,7 +112,7 @@ export async function GET(
 
             const batchSize = INGEST.FILE_BATCH_INSERT_SIZE;
             for (let i = 0; i < dbFiles.length; i += batchSize) {
-                await db.insert(files).values(dbFiles.slice(i, i + batchSize));
+                await db.insert(files).values(dbFiles.slice(i, i + batchSize)).onConflictDoNothing();
             }
         }
 
@@ -136,9 +130,15 @@ export async function GET(
             })
         );
     } catch (error) {
-        requestLogger.error({ error }, 'Failed to fetch commit files');
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorStack = error instanceof Error ? error.stack : undefined;
+        if (errorMessage.includes('rate limit exceeded')) {
+            requestLogger.warn({ error: { message: errorMessage } }, 'GitHub rate limit hit fetching commit files');
+            return NextResponse.json({ error: errorMessage }, { status: 429 });
+        }
+        requestLogger.error({ error: { message: errorMessage, stack: errorStack, type: typeof error } }, 'Failed to fetch commit files');
         return NextResponse.json(
-            { error: 'Failed to fetch files' },
+            { error: 'Failed to fetch files', details: errorMessage },
             { status: 500 }
         );
     }

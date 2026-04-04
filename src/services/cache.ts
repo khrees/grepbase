@@ -1,15 +1,11 @@
 import { getPlatformEnv } from '@/lib/platform/context';
 import { logger } from '@/lib/logger';
 import type { PlatformCache } from '@/lib/platform/types';
-import { GITHUB } from '@/lib/constants';
+import { GITHUB, CACHE_TTL } from '@/lib/constants';
 
 const cacheLogger = logger.child({ service: 'cache' });
 
-export const CACHE_TTL = {
-    HOUR: 3600,
-    DAY: 86400,
-    WEEK: 604800,
-};
+export { CACHE_TTL };
 
 export class CacheService {
     private getKv(): PlatformCache | null {
@@ -30,7 +26,7 @@ export class CacheService {
         if (!kv) return null;
         try {
             const value = await kv.get<T>(key);
-            if (value) {
+            if (value !== null && value !== undefined) {
                 cacheLogger.debug({ key }, 'Cache hit');
             } else {
                 cacheLogger.debug({ key }, 'Cache miss');

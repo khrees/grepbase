@@ -1,7 +1,9 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { nanoid } from 'nanoid';
 import { repositories, commits, files, ingestJobs } from '@/db/schema';
 import {
     fetchRepository,
+    fetchReadme,
     fetchCommitHistoryPage,
     fetchFilesAtCommit,
     getLanguageFromPath,
@@ -10,12 +12,22 @@ import { logger } from '@/lib/logger';
 import type { Database } from '@/db/index';
 import { GITHUB, INGEST } from '@/lib/constants';
 import { safeGrantRepoAccess } from './resource-access';
+import { parseGitHubUrl } from '@/lib/sanitize';
 
 interface IngestOptions {
     jobId: string;
     url: string;
     clientId: string;
     db: Database;
+    /** Pre-parsed owner/repo — avoids re-parsing the URL inside the worker */
+    owner?: string;
+    repoName?: string;
+    /** Specific branch to ingest. Omit to use the repository's default branch. */
+    branch?: string;
+    /** If true, deletes existing commits for the repository before fetching */
+    clearExisting?: boolean;
+    /** Specific commit SHA to start fetching backwards from */
+    startSha?: string;
 }
 
 export async function processRepoIngestion({
@@ -23,6 +35,11 @@ export async function processRepoIngestion({
     url,
     clientId,
     db,
+    owner: ownerArg,
+    repoName: repoNameArg,
+    branch,
+    clearExisting,
+    startSha,
 }: IngestOptions): Promise<void> {
     const processLogger = logger.child({ jobId, url, clientId, worker: true });
 
@@ -38,23 +55,25 @@ export async function processRepoIngestion({
             })
             .where(eq(ingestJobs.jobId, jobId));
 
-        // 2. Extract owner/repo
-        let normalized = url
-            .replace(/^(https?:\/\/)?(www\.)?/i, '')
-            .replace(/\.git\/?$/, '')
-            .replace(/\/+$/, '');
-
-        if (normalized.toLowerCase().startsWith('github.com/')) {
-            normalized = normalized.substring('github.com/'.length);
+        // 2. Resolve owner/repo — use pre-parsed values when available to avoid
+        //    duplicating sanitize logic; fall back to parsing the URL for retry paths.
+        let owner: string;
+        let repoName: string;
+        if (ownerArg && repoNameArg) {
+            owner = ownerArg;
+            repoName = repoNameArg;
+        } else {
+            const parsed = parseGitHubUrl(url);
+            owner = parsed.owner;
+            repoName = parsed.repo;
         }
 
-        const parts = normalized.split('/').filter(Boolean);
-        const owner = parts[0];
-        const repoName = parts[1];
-
-        // 3. Fetch repo details
+        // 3. Fetch repo details and README in parallel
         processLogger.debug({ owner, repoName }, 'Fetching repository details');
-        const repoDetails = await fetchRepository(owner, repoName);
+        const [repoDetails, readme] = await Promise.all([
+            fetchRepository(owner, repoName),
+            fetchReadme(owner, repoName),
+        ]);
 
         // 4. Save/update repository in DB
         const now = new Date();
@@ -62,30 +81,41 @@ export async function processRepoIngestion({
             .set({ progress: 20, updatedAt: now })
             .where(eq(ingestJobs.jobId, jobId));
 
-        const repoResult = await db
-            .insert(repositories)
-            .values({
-                url,
-                owner,
-                name: repoName,
-                description: repoDetails.description,
-                readme: null, // Readme fetched separately now
-                stars: repoDetails.stars,
-                defaultBranch: repoDetails.defaultBranch,
-                lastFetched: now,
-                createdAt: now,
-            })
-            .onConflictDoUpdate({
-                target: [repositories.url],
-                set: {
+        let repoResult = await db
+            .select()
+            .from(repositories)
+            .where(eq(repositories.url, url))
+            .limit(1);
+
+        if (repoResult.length === 0) {
+            const repoId = nanoid(16);
+            repoResult = await db
+                .insert(repositories)
+                .values({
+                    id: repoId,
+                    url,
+                    owner,
+                    name: repoName,
                     description: repoDetails.description,
-                    readme: null,
+                    readme,
                     stars: repoDetails.stars,
                     defaultBranch: repoDetails.defaultBranch,
                     lastFetched: now,
-                },
-            })
-            .returning();
+                    createdAt: now,
+                })
+                .returning();
+        } else {
+            await db
+                .update(repositories)
+                .set({
+                    description: repoDetails.description,
+                    readme,
+                    stars: repoDetails.stars,
+                    defaultBranch: repoDetails.defaultBranch,
+                    lastFetched: now,
+                })
+                .where(eq(repositories.url, url));
+        }
 
         if (!repoResult || repoResult.length === 0) {
             processLogger.error('Failed to get repository ID after insert/update');
@@ -99,6 +129,11 @@ export async function processRepoIngestion({
         await safeGrantRepoAccess(repoId, clientId);
 
         // 5. Fetch commits
+        if (clearExisting) {
+            processLogger.info({ repoId }, 'Clearing existing commits for sliding window ingestion');
+            await db.delete(commits).where(eq(commits.repoId, repoId));
+        }
+
         const maxCommits = Math.max(1, GITHUB.MAX_COMMITS_PER_REPO);
         await db.update(ingestJobs)
             .set({
@@ -110,10 +145,8 @@ export async function processRepoIngestion({
             })
             .where(eq(ingestJobs.jobId, jobId));
 
-        processLogger.debug({ owner, repoName, maxCommits }, 'Fetching commits in pages');
+        processLogger.debug({ owner, repoName, maxCommits, startSha }, 'Fetching commits in pages');
 
-        // Process commits incrementally so large repositories become usable quickly.
-        const BATCH_SIZE = 50;
         const PER_PAGE = GITHUB.MAX_COMMITS_PER_REQUEST;
         let processedCommits = 0;
         let expectedCommits = maxCommits;
@@ -123,7 +156,9 @@ export async function processRepoIngestion({
         while (processedCommits < maxCommits) {
             const remaining = maxCommits - processedCommits;
             const pageSize = Math.min(PER_PAGE, remaining);
-            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize);
+            // If startSha is provided, use it instead of branch to fetch from that specific point backwards
+            const targetRef = startSha || branch;
+            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize, targetRef);
 
             if (pageCommits.length === 0) {
                 expectedCommits = Math.max(1, processedCommits);
@@ -134,8 +169,8 @@ export async function processRepoIngestion({
                 latestCommitShas.push(...pageCommits.slice(0, 5).map((commit) => commit.sha));
             }
 
-            for (let i = 0; i < pageCommits.length; i += BATCH_SIZE) {
-                const batch = pageCommits.slice(i, i + BATCH_SIZE);
+            for (let i = 0; i < pageCommits.length; i += INGEST.COMMIT_BATCH_SIZE) {
+                const batch = pageCommits.slice(i, i + INGEST.COMMIT_BATCH_SIZE);
 
                 const dbCommits = batch.map((c, idx) => ({
                     repoId,
@@ -149,35 +184,19 @@ export async function processRepoIngestion({
                 }));
 
                 // Persist each batch in one statement to reduce round-trip overhead.
-                try {
-                    await db
-                        .insert(commits)
-                        .values(dbCommits)
-                        .onConflictDoUpdate({
-                            target: [commits.repoId, commits.sha],
-                            set: {
-                                message: sql`excluded.message`,
-                                authorName: sql`excluded.author_name`,
-                                authorEmail: sql`excluded.author_email`,
-                                date: sql`excluded.date`,
-                                order: sql`excluded."order"`,
-                            },
-                        });
-                } catch (error) {
-                    // Transitional fallback for environments that have not applied the
-                    // composite (repo_id, sha) unique index migration yet.
-                    try {
-                        await db
-                            .insert(commits)
-                            .values(dbCommits)
-                            .onConflictDoNothing();
-                    } catch (fallbackError) {
-                        processLogger.warn(
-                            { error, fallbackError, batchSize: dbCommits.length },
-                            'Could not persist commit batch'
-                        );
-                    }
-                }
+                await db
+                    .insert(commits)
+                    .values(dbCommits)
+                    .onConflictDoUpdate({
+                        target: [commits.repoId, commits.sha],
+                        set: {
+                            message: sql`excluded.message`,
+                            authorName: sql`excluded.author_name`,
+                            authorEmail: sql`excluded.author_email`,
+                            date: sql`excluded.date`,
+                            order: sql`excluded."order"`,
+                        },
+                    });
             }
 
             processedCommits += pageCommits.length;
@@ -255,7 +274,7 @@ export async function processRepoIngestion({
                         const FILE_BATCH_SIZE = INGEST.FILE_BATCH_INSERT_SIZE;
                         for (let j = 0; j < filesToSave.length; j += FILE_BATCH_SIZE) {
                             const fileBatch = filesToSave.slice(j, j + FILE_BATCH_SIZE);
-                            await db.insert(files).values(fileBatch);
+                            await db.insert(files).values(fileBatch).onConflictDoNothing();
                         }
                     }
                 }

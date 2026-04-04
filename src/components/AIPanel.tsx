@@ -5,7 +5,7 @@ import { Sparkles, Send, Loader2, AlertCircle, RefreshCw, X, Clock, Square } fro
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import styles from './AIPanel.module.css';
-import { getAISettings, getAutoExplainEnabled } from './SettingsModal';
+import { getAISettings, getAutoExplainEnabled } from '@/stores/settings-store';
 import { api } from '@/lib/api-client';
 
 import type { Repository, Commit } from '@/types';
@@ -33,7 +33,7 @@ function getChatStorageKey(repoId: number, commitSha: string): string {
 function restoreMessagesFromStorage(storageKey: string): Message[] {
     if (typeof window === 'undefined') return [];
 
-    const raw = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey);
+    const raw = sessionStorage.getItem(storageKey);
     if (!raw) return [];
 
     try {
@@ -54,8 +54,6 @@ function restoreMessagesFromStorage(storageKey: string): Message[] {
 function normalizeAssistantMarkdown(content: string): string {
     const trimmed = content.trim();
 
-    // Some models wrap the full response in ```markdown fences.
-    // Unwrap that so headings/lists render as markdown in the UI.
     const fencedMarkdown = trimmed.match(/^```[ \t]*(markdown|md|mdx)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
     if (fencedMarkdown) {
         const language = fencedMarkdown[1]?.toLowerCase();
@@ -72,10 +70,7 @@ function normalizeAssistantMarkdown(content: string): string {
 
 function looksLikeRepositoryFilePath(value: string): boolean {
     if (!value || /\s/.test(value)) return false;
-
-    // Package names such as @types/better-sqlite3 are not repository file paths.
     if (/^@[^/]+\/[^/]+$/.test(value)) return false;
-
     if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return false;
 
     const hasSeparator = value.includes('/');
@@ -96,7 +91,6 @@ function normalizeFileReference(raw: string): string | null {
     let value = raw.trim();
     if (!value) return null;
 
-    // Remove common wrappers/punctuation around model-emitted file references
     value = value
         .replace(/^[`"'([{<]+/, '')
         .replace(/[`"')\]}>.,;:!?]+$/, '')
@@ -187,9 +181,8 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         [repository.id, commit.sha]
     );
 
-    useEffect(() => {
-        visibleFilePathsRef.current = visibleFilePaths;
-    }, [visibleFilePaths]);
+    visibleFilePathsRef.current = visibleFilePaths;
+
 
     const explainCommit = useCallback(async () => {
         const settings = getAISettings();
@@ -198,7 +191,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
             return;
         }
 
-        // Cancel previous request if any
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
@@ -210,7 +202,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         setMessages([]);
         setElapsedTime(0);
 
-        // Start timer
         const startTime = Date.now();
         timerRef.current = setInterval(() => {
             setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
@@ -244,11 +235,9 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
             setStreaming(false);
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') {
-                // Request was cancelled, don't show error
                 return;
             }
             const message = err instanceof Error ? err.message : 'Something went wrong';
-            // Provide helpful hints for common errors
             if (message.includes('fetch')) {
                 setError('Connection failed. Is your AI provider running?');
             } else if (message.includes('API key')) {
@@ -268,7 +257,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
 
     // Reset messages when commit changes
     useEffect(() => {
-        // Cancel any in-flight request
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
@@ -283,25 +271,27 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
 
         setMessages([]);
 
-        // Auto-explain if enabled
         if (getAutoExplainEnabled()) {
             explainCommit();
         }
     }, [chatStorageKey, commit.sha, explainCommit]);
 
-    // Persist chat by commit so refresh does not clear context.
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-
+    // Persist chat by commit — render-phase check
+    const lastPersistedKeyRef = useRef<string | null>(null);
+    const lastPersistedCountRef = useRef(0);
+    if (
+        typeof window !== 'undefined' &&
+        (chatStorageKey !== lastPersistedKeyRef.current || messages.length !== lastPersistedCountRef.current)
+    ) {
+        lastPersistedKeyRef.current = chatStorageKey;
+        lastPersistedCountRef.current = messages.length;
         if (messages.length === 0) {
             sessionStorage.removeItem(chatStorageKey);
-            return;
+        } else {
+            sessionStorage.setItem(chatStorageKey, JSON.stringify(messages.slice(-30)));
         }
+    }
 
-        const snapshot = JSON.stringify(messages.slice(-30));
-        sessionStorage.setItem(chatStorageKey, snapshot);
-        localStorage.setItem(chatStorageKey, snapshot);
-    }, [chatStorageKey, messages]);
 
     // Scroll to bottom on new messages
     useEffect(() => {
@@ -324,7 +314,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         setLoading(true);
         setError(null);
 
-        // Cancel previous request if any
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
@@ -364,7 +353,6 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
             setStreaming(false);
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') {
-                // Request was cancelled
                 return;
             }
             setError(err instanceof Error ? err.message : 'Something went wrong');

@@ -20,15 +20,18 @@ import { getClientIdFromHeaders, resolveAvailableFilePathsForCommit, resolveProv
 export async function POST(request: NextRequest) {
     const requestLogger = logger.child({ endpoint: 'POST /api/explain/commit' });
     const startTime = Date.now();
+    requestLogger.debug({ method: request.method, url: request.url }, 'Request received');
 
     try {
         const csrfError = enforceCsrfProtection(request);
         if (csrfError) {
+            requestLogger.warn('CSRF validation failed');
             return csrfError;
         }
 
         const session = await resolveSession(request);
         if (!session) {
+            requestLogger.warn('Session not found');
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -63,6 +66,7 @@ export async function POST(request: NextRequest) {
 
         const repoAccess = await hasRepoAccess(repoId, session.sessionId);
         if (!repoAccess) {
+            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Repository access denied for explain');
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
 

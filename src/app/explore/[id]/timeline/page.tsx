@@ -8,20 +8,10 @@ import {
 } from 'lucide-react';
 import styles from './timeline.module.css';
 import SettingsModal from '@/components/SettingsModal';
-import { getAISettings } from '@/components/SettingsModal';
 import CalendarTimeline from '@/components/CalendarTimeline';
 import { api } from '@/lib/api-client';
-import {
-    fetchCommitsPageForRepository,
-    fetchInitialCommitsForRepository,
-} from '@/lib/commit-pagination';
-
-interface Repository {
-    id: number;
-    name: string;
-    owner: string;
-    description: string | null;
-}
+import { useCommits } from '@/hooks/use-commits';
+import { getAISettings } from '@/stores/settings-store';
 
 interface Commit {
     id: number;
@@ -38,11 +28,6 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     const summaryRequestIdRef = useRef(0);
     const summaryAbortControllerRef = useRef<AbortController | null>(null);
 
-    const [repository, setRepository] = useState<Repository | null>(null);
-    const [commits, setCommits] = useState<Commit[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadingMoreCommits, setLoadingMoreCommits] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [showSettings, setShowSettings] = useState(false);
 
     // Day summary state
@@ -52,86 +37,15 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     const [summaryLoading, setSummaryLoading] = useState(false);
     const [daySummary, setDaySummary] = useState('');
 
-    const commitPrefetchRequestRef = useRef(0);
+    // React Query: Commits
+    const commitsQuery = useCommits(id);
+    const repository = commitsQuery.data?.repository ?? null;
+    const commits = useMemo(() => (commitsQuery.data?.commits ?? []) as Commit[], [commitsQuery.data?.commits]);
 
-    const appendUniqueCommits = useCallback((incoming: Commit[]) => {
-        if (incoming.length === 0) return;
-        setCommits(prev => {
-            const seenShas = new Set(prev.map(commit => commit.sha));
-            const additions = incoming.filter(commit => !seenShas.has(commit.sha));
-            if (additions.length === 0) return prev;
-            return [...prev, ...additions];
-        });
-    }, []);
-
-    const prefetchRemainingCommits = useCallback((startPage: number) => {
-        const requestId = commitPrefetchRequestRef.current + 1;
-        commitPrefetchRequestRef.current = requestId;
-
-        if (startPage <= 1) {
-            setLoadingMoreCommits(false);
-            return;
-        }
-
-        setLoadingMoreCommits(true);
-
-        const load = async () => {
-            let page = startPage;
-            let hasNext = true;
-
-            while (hasNext && commitPrefetchRequestRef.current === requestId) {
-                const pageData = await fetchCommitsPageForRepository(id, page);
-                if (commitPrefetchRequestRef.current !== requestId) {
-                    return;
-                }
-
-                appendUniqueCommits(pageData.commits);
-                hasNext = Boolean(pageData.pagination?.hasNext);
-                page += 1;
-            }
-        };
-
-        void load()
-            .catch((prefetchError) => {
-                if (commitPrefetchRequestRef.current !== requestId) return;
-                console.warn('Timeline commit prefetch stopped:', prefetchError);
-            })
-            .finally(() => {
-                if (commitPrefetchRequestRef.current === requestId) {
-                    setLoadingMoreCommits(false);
-                }
-            });
-    }, [appendUniqueCommits, id]);
-
-    // Fetch repository and commits on mount
-    useEffect(() => {
-        async function fetchData() {
-            commitPrefetchRequestRef.current += 1;
-            setLoadingMoreCommits(false);
-
-            try {
-                const data = await fetchInitialCommitsForRepository(id);
-
-                setRepository(data.repository);
-                setCommits(data.commits);
-
-                if (data.pagination?.hasNext) {
-                    prefetchRemainingCommits((data.pagination.page || 1) + 1);
-                }
-
-                setLoading(false);
-            } catch (err) {
-                setError(err instanceof Error ? err.message : 'Something went wrong');
-                setLoading(false);
-            }
-        }
-
-        void fetchData();
-
-        return () => {
-            commitPrefetchRequestRef.current += 1;
-        };
-    }, [id, prefetchRemainingCommits]);
+    // Auto-fetch all pages (render-phase)
+    if (commitsQuery.hasNextPage && !commitsQuery.isFetchingNextPage) {
+        Promise.resolve().then(() => commitsQuery.fetchNextPage());
+    }
 
     const totalCommits = commits.length;
     const activeDays = useMemo(() => {
@@ -168,11 +82,8 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
         setSummaryLoading(false);
     }, []);
 
-    useEffect(() => {
-        return () => {
-            summaryAbortControllerRef.current?.abort();
-        };
-    }, []);
+    // Abort in-flight summary on unmount
+    useEffect(() => () => { summaryAbortControllerRef.current?.abort(); }, []);
 
     const handleDayClick = useCallback(async (date: Date, dayCommits: Commit[]) => {
         cancelSummaryRequest();
@@ -268,7 +179,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
         setDaySummary('');
     }, [cancelSummaryRequest]);
 
-    if (loading) {
+    if (commitsQuery.isLoading) {
         return (
             <div className={styles.loadingState}>
                 <Loader2 size={32} className={styles.spinner} />
@@ -277,10 +188,10 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
         );
     }
 
-    if (error) {
+    if (commitsQuery.error) {
         return (
             <div className={styles.errorState}>
-                <p>{error}</p>
+                <p>{commitsQuery.error instanceof Error ? commitsQuery.error.message : 'Something went wrong'}</p>
                 <button type="button" className="btn btn-primary" onClick={() => router.push('/')}>
                     Go Home
                 </button>
@@ -328,7 +239,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                     </div>
                     <span className={styles.headerBadge}>
                         <CalendarIcon size={14} />
-                        {loadingMoreCommits ? 'Timeline View (loading more...)' : 'Timeline View'}
+                        {commitsQuery.isFetchingNextPage ? 'Timeline View (loading more...)' : 'Timeline View'}
                     </span>
                 </div>
 

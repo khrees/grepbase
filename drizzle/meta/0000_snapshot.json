@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dfd2901e-6aa0-453d-a46e-3bc554e8278b",
+  "id": "cefce261-ebfa-4f47-aed9-acf959d37836",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "analyses": {
@@ -83,7 +83,7 @@
         },
         "repo_id": {
           "name": "repo_id",
-          "type": "integer",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -132,9 +132,10 @@
         }
       },
       "indexes": {
-        "commits_sha_unique": {
-          "name": "commits_sha_unique",
+        "commits_repo_sha_unique": {
+          "name": "commits_repo_sha_unique",
           "columns": [
+            "repo_id",
             "sha"
           ],
           "isUnique": true
@@ -221,6 +222,14 @@
         }
       },
       "indexes": {
+        "idx_files_commit_path": {
+          "name": "idx_files_commit_path",
+          "columns": [
+            "commit_id",
+            "path"
+          ],
+          "isUnique": true
+        },
         "idx_files_commit_id": {
           "name": "idx_files_commit_id",
           "columns": [
@@ -281,7 +290,7 @@
         },
         "repo_id": {
           "name": "repo_id",
-          "type": "integer",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -426,10 +435,10 @@
       "columns": {
         "id": {
           "name": "id",
-          "type": "integer",
+          "type": "text",
           "primaryKey": true,
           "notNull": true,
-          "autoincrement": true
+          "autoincrement": false
         },
         "url": {
           "name": "url",

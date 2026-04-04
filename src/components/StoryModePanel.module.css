@@ -6,68 +6,97 @@
     background: var(--bg-primary);
 }
 
-.controls {
+/* ── Chapter navigation bar ── */
+.chapterNav {
     display: flex;
+    align-items: center;
     gap: var(--space-sm);
-    align-items: flex-end;
-    padding: var(--space-md);
+    padding: 10px var(--space-md);
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-secondary);
+    flex-shrink: 0;
 }
 
-.field,
-.fieldSmall {
+.chapterArrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.chapterArrow:hover:not(:disabled) {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.chapterArrow:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.chapterInfo {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     min-width: 0;
 }
 
-.field {
-    flex: 1;
-}
-
-.fieldSmall {
-    width: 120px;
-}
-
-.field label,
-.fieldSmall label {
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.field select,
-.fieldSmall input {
-    width: 100%;
-    height: 34px;
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    padding: 0 10px;
-    font-size: 0.82rem;
-    font-family: var(--font-mono);
-}
-
-.field select:focus,
-.fieldSmall input:focus {
-    outline: none;
-    border-color: var(--accent-primary);
-}
-
-.meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px var(--space-md);
-    color: var(--text-muted);
+.chapterLabel {
     font-size: 0.78rem;
-    border-bottom: 1px solid var(--border-subtle);
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.01em;
 }
 
+.chapterRange {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+}
+
+.commitCount {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.regenerate {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.regenerate:hover:not(:disabled) {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.regenerate:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── States ── */
 .error {
     margin: var(--space-md);
     padding: var(--space-sm) var(--space-md);
@@ -86,8 +115,19 @@
     text-align: center;
     color: var(--text-muted);
     padding: var(--space-xl);
+    font-size: 0.88rem;
 }
 
+.generating {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding-bottom: var(--space-md);
+}
+
+/* ── Story content ── */
 .storyContent {
     flex: 1;
     overflow: auto;
@@ -118,27 +158,21 @@
     margin-bottom: var(--space-md);
 }
 
+.storyContent :global(code) {
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    background: var(--bg-tertiary);
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+/* ── Spinner ── */
 .spinner {
     animation: spin 1s linear infinite;
+    flex-shrink: 0;
 }
 
 @keyframes spin {
-    from {
-        transform: rotate(0deg);
-    }
-
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-@media (max-width: 980px) {
-    .controls {
-        flex-wrap: wrap;
-    }
-
-    .field,
-    .fieldSmall {
-        min-width: 220px;
-    }
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
 }

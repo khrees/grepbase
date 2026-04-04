@@ -3,12 +3,11 @@ import { and, eq } from 'drizzle-orm';
 import { repositories, commits } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS } from '@/lib/constants';
+import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { hasRepoAccess } from '@/services/resource-access';
 import { fetchCommitFileDiffs } from '@/services/github';
-
-const COMMIT_SHA_REGEX = /^[0-9a-f]{7,64}$/i;
+import { isSafeFilePath } from '@/lib/sanitize';
 
 export async function GET(
     request: NextRequest,
@@ -33,48 +32,53 @@ export async function GET(
         }
 
         const { id, sha } = await params;
-        const repoId = Number.parseInt(id, 10);
-
-        if (Number.isNaN(repoId)) {
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
+        const repoId = id;
 
         if (!COMMIT_SHA_REGEX.test(sha)) {
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });
         }
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        const filePathParam = request.nextUrl.searchParams.get('path');
+        const filePath = filePathParam?.trim() || null;
+        if (filePath && !isSafeFilePath(filePath)) {
+            return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
         }
 
-        const repo = await db.select()
-            .from(repositories)
-            .where(eq(repositories.id, repoId))
-            .limit(1);
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch {
+            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
+        }
+
+        const [repo, commit] = await Promise.all([
+            db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1),
+            db.select().from(commits).where(and(eq(commits.repoId, repoId), eq(commits.sha, sha))).limit(1),
+        ]);
         if (repo.length === 0) {
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
-
-        const commit = await db.select()
-            .from(commits)
-            .where(and(eq(commits.repoId, repoId), eq(commits.sha, sha)))
-            .limit(1);
         if (commit.length === 0) {
             return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
         }
 
-        const changedFiles = await fetchCommitFileDiffs(repo[0].owner, repo[0].name, sha);
-        const totalAdditions = changedFiles.reduce((sum, file) => sum + file.additions, 0);
-        const totalDeletions = changedFiles.reduce((sum, file) => sum + file.deletions, 0);
+        const allChangedFiles = await fetchCommitFileDiffs(repo[0].owner, repo[0].name, sha);
+        const filteredFiles = filePath
+            ? allChangedFiles.filter(file => file.path === filePath || file.previousPath === filePath)
+            : allChangedFiles;
+        const totalAdditions = filteredFiles.reduce((sum, file) => sum + file.additions, 0);
+        const totalDeletions = filteredFiles.reduce((sum, file) => sum + file.deletions, 0);
 
         return applyPrivateNoStoreHeaders(
             NextResponse.json({
                 commit: commit[0],
-                files: changedFiles,
+                files: filteredFiles,
                 stats: {
-                    changedFiles: changedFiles.length,
+                    changedFiles: filteredFiles.length,
                     additions: totalAdditions,
                     deletions: totalDeletions,
                 },

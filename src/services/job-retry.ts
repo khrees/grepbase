@@ -3,10 +3,9 @@ import { ingestJobs, repositories, commits } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { logger } from '@/lib/logger';
 import { analytics } from '@/lib/analytics';
+import { JOB_RETRY } from '@/lib/constants';
 import { processRepoIngestion } from '@/services/ingest';
 import { waitUntil } from '@vercel/functions';
-
-const MAX_RETRIES = 3;
 
 /**
  * Retry a single failed or stuck job
@@ -31,9 +30,8 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
 
     // Check if it's already processing
     if (currentJob.status === 'processing') {
-      // If it hasn't been updated in 15 minutes, we can assume it got stuck
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-      if (new Date(currentJob.updatedAt) > fifteenMinutesAgo) {
+      const stuckThreshold = new Date(Date.now() - JOB_RETRY.STUCK_JOB_THRESHOLD_MS);
+      if (new Date(currentJob.updatedAt) > stuckThreshold) {
         requestLogger.info('Job is currently processing normally, skipping retry');
         return false;
       }
@@ -42,7 +40,7 @@ export async function retryJob(jobId: string, clientId: string = 'system'): Prom
 
     // Check retry count
     const retryCount = currentJob.retryCount || 0;
-    if (retryCount >= MAX_RETRIES) {
+    if (retryCount >= JOB_RETRY.MAX_RETRIES) {
       requestLogger.warn({ retryCount }, 'Job has reached maximum retries');
       return false;
     }
@@ -139,23 +137,23 @@ export async function retryFailedJobs(clientId: string = 'cron'): Promise<{
         and(
           eq(ingestJobs.status, 'failed'),
           // Using raw SQL for the retryCount condition since it might be null
-          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${MAX_RETRIES})`
+          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${JOB_RETRY.MAX_RETRIES})`
         )
       )
-      .limit(10); // Process in batches
+      .limit(JOB_RETRY.BATCH_SIZE);
 
-    // Find stuck processing jobs (no updates in 15 mins)
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    // Find stuck processing jobs
+    const stuckThreshold = new Date(Date.now() - JOB_RETRY.STUCK_JOB_THRESHOLD_MS);
     const stuckJobs = await database.select()
       .from(ingestJobs)
       .where(
         and(
           eq(ingestJobs.status, 'processing'),
-          sql`${ingestJobs.updatedAt} < ${fifteenMinutesAgo.toISOString()}`,
-          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${MAX_RETRIES})`
+          sql`${ingestJobs.updatedAt} < ${stuckThreshold.toISOString()}`,
+          sql`(${ingestJobs.retryCount} IS NULL OR ${ingestJobs.retryCount} < ${JOB_RETRY.MAX_RETRIES})`
         )
       )
-      .limit(10);
+      .limit(JOB_RETRY.BATCH_SIZE);
 
     const jobsToRetry = [...failedJobs, ...stuckJobs];
 

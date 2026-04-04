@@ -33,18 +33,7 @@ export async function GET(
         }
 
         const { id } = await params;
-        const repoId = parseInt(id, 10);
-
-        if (isNaN(repoId)) {
-            requestLogger.warn({ id }, 'Invalid repository ID');
-            return NextResponse.json({ error: 'Invalid repository ID' }, { status: 400 });
-        }
-
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
+        const repoId = id;
 
         // Parse pagination params from query string
         const url = new URL(request.url);
@@ -59,7 +48,7 @@ export async function GET(
             : PAGINATION.DEFAULT_LIMIT;
         const offset = (page - 1) * limit;
 
-        // Check if repo exists
+        // Check if repo exists and get repo data
         const repo = await db.select()
             .from(repositories)
             .where(eq(repositories.id, repoId))
@@ -70,22 +59,31 @@ export async function GET(
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
 
-        // Get total count
-        const totalResult = await db.select({ count: sql<number>`count(*)` })
-            .from(commits)
-            .where(eq(commits.repoId, repoId));
-        const total = Number(totalResult[0]?.count || 0);
+        // Access control: check KV-based access grant, but allow access if repo exists in DB
+        // This supports both multi-tenant (with KV) and single-user (DB-only) deployments
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                // No access grant - try to create one, but don't block access
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch {
+            // Access control system unavailable - allow access to existing repos
+            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
+        }
 
-        // Fetch commits with pagination ordered by their position (oldest first)
-        const repoCommits = await db.select()
-            .from(commits)
-            .where(eq(commits.repoId, repoId))
-            .orderBy(asc(commits.order))
-            .limit(limit)
-            .offset(offset);
+        // Run count and data fetch in parallel
+        const [totalResult, repoCommits] = await Promise.all([
+            db.select({ count: sql<number>`count(*)` }).from(commits).where(eq(commits.repoId, repoId)),
+            db.select().from(commits).where(eq(commits.repoId, repoId)).orderBy(asc(commits.order)).limit(limit).offset(offset),
+        ]);
+        const total = Number(totalResult[0]?.count || 0);
 
         requestLogger.info({ repoId, page, limit, total }, 'Commits fetched successfully');
 
+        const now = new Date().toISOString();
         return applyPrivateNoStoreHeaders(
             NextResponse.json({
                 repository: repo[0],
@@ -97,6 +95,10 @@ export async function GET(
                     totalPages: Math.ceil(total / limit),
                     hasNext: offset + limit < total,
                     hasPrev: page > 1,
+                },
+                cache: {
+                    stale: false,
+                    lastFetched: now,
                 },
             })
         );

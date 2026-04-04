@@ -29,7 +29,7 @@ export const githubUrlSchema = z.string()
 export const aiProviderConfigSchema = z.object({
     type: z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']),
     apiKey: z.string().optional(),
-    baseUrl: z.string().url().optional(),
+    baseUrl: z.url().optional(),
     model: z.string().max(100).optional(),
 });
 
@@ -40,7 +40,7 @@ export type AIProviderTypeFromSchema = z.infer<typeof aiProviderTypeSchema>;
 // Explain API request
 export const explainRequestSchema = z.object({
     type: z.enum(['commit', 'project', 'question', 'day-summary', 'story']),
-    repoId: z.number().int().positive(),
+    repoId: z.string().min(1),
     commitSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
     startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
     endSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
@@ -60,7 +60,7 @@ export const explainRequestSchema = z.object({
     projectOwner: z.string().max(200).optional(),
     apiKey: z.string().optional(),
     model: z.string().max(100).optional(),
-    baseUrl: z.string().url().optional(),
+    baseUrl: z.url().optional(),
 }).refine(
     (data) => {
         if (data.type === 'commit') return !!data.commitSha;
@@ -89,7 +89,9 @@ export const explainRequestSchema = z.object({
 // Repository ingest request
 export const ingestRepoSchema = z.object({
     url: githubUrlSchema,
-    branch: z.string().optional().default('main'),
+    branch: z.string().min(1).max(255).optional(),
+    startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
+    clearExisting: z.boolean().optional(),
 });
 
 // Pagination params
@@ -100,7 +102,7 @@ export const paginationSchema = z.object({
 
 // Commit query params
 export const commitQuerySchema = z.object({
-    repoId: z.number().int().positive(),
+    repoId: z.string().min(1),
     page: z.number().int().positive().optional().default(1),
     limit: z.number().int().positive().max(100).optional().default(50),
 });

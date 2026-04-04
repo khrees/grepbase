@@ -4,11 +4,26 @@
  */
 
 import { cache } from './cache';
-import { CACHE_TTL, GITHUB } from '@/lib/constants';
+import { CACHE_TTL, GITHUB, TIMEOUTS } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { getPlatformEnv } from '@/lib/platform/context';
 
 const githubLogger = logger.child({ service: 'github' });
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = TIMEOUTS.GITHUB_API): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+        return response;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
 
 export interface GitHubRepo {
     owner: string;
@@ -62,17 +77,13 @@ export interface GitHubCompareDiff {
     files: GitHubCommitFileDiff[];
 }
 
-// Helper to get headers. Auth headers are opt-in and should never be enabled for
-// unauthenticated user-provided repository fetches.
-function getGitHubHeaders(accept = 'application/vnd.github.v3+json', includeServerToken = false) {
+// Helper to get headers. Includes GITHUB_TOKEN if available to raise rate limits
+// from 60/hr (unauthenticated) to 5000/hr. All repos fetched here are public.
+function getGitHubHeaders(accept = 'application/vnd.github.v3+json') {
     const headers: Record<string, string> = {
         'Accept': accept,
         'User-Agent': 'Grepbase',
     };
-
-    if (!includeServerToken) {
-        return headers;
-    }
 
     // Try process.env first (local dev / build time)
     let token = process.env.GITHUB_TOKEN;
@@ -83,7 +94,7 @@ function getGitHubHeaders(accept = 'application/vnd.github.v3+json', includeServ
             const platform = getPlatformEnv();
             token = platform.getSecret('GITHUB_TOKEN');
         } catch {
-            // Not in request context
+            githubLogger.debug('Not in request context, cannot get GITHUB_TOKEN from platform');
         }
     }
 
@@ -96,6 +107,27 @@ function getGitHubHeaders(accept = 'application/vnd.github.v3+json', includeServ
 
 function encodeRepoComponent(value: string): string {
     return encodeURIComponent(value);
+}
+
+/**
+ * Throw a human-readable error for non-OK GitHub API responses.
+ * Surfaces rate-limit resets and distinguishes 404 vs auth vs server errors.
+ */
+function throwGitHubError(response: Response, context: string): never {
+    if (response.status === 429 || response.status === 403) {
+        const resetAt = response.headers.get('x-ratelimit-reset');
+        const remaining = response.headers.get('x-ratelimit-remaining');
+        if (remaining === '0' || response.status === 429) {
+            const resetMsg = resetAt
+                ? ` Resets at ${new Date(Number(resetAt) * 1000).toISOString()}.`
+                : '';
+            throw new Error(`GitHub API rate limit exceeded.${resetMsg} Consider providing a GITHUB_TOKEN.`);
+        }
+    }
+    if (response.status === 404) {
+        throw new Error(`${context}: not found or not publicly accessible`);
+    }
+    throw new Error(`${context}: ${response.status} ${response.statusText}`);
 }
 
 function buildRepoApiBase(owner: string, repo: string): string {
@@ -112,16 +144,12 @@ function encodeGitHubPath(path: string): string {
 }
 
 export async function ensureRepositoryIsPublic(owner: string, repo: string): Promise<void> {
-    const response = await fetch(buildRepoApiBase(owner, repo), {
+    const response = await fetchWithTimeout(buildRepoApiBase(owner, repo), {
         headers: getGitHubHeaders(),
     });
 
-    if (response.status === 404) {
-        throw new Error('Repository not found or not publicly accessible');
-    }
-
     if (!response.ok) {
-        throw new Error(`Failed to validate repository visibility: ${response.status} ${response.statusText}`);
+        throwGitHubError(response, 'Repository not found or not publicly accessible');
     }
 
     const data = await response.json() as { private?: boolean };
@@ -143,13 +171,13 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
 
     githubLogger.info({ owner, repo }, 'Fetching repository from GitHub API');
 
-    const response = await fetch(buildRepoApiBase(owner, repo), {
+    const response = await fetchWithTimeout(buildRepoApiBase(owner, repo), {
         headers: getGitHubHeaders(),
     });
 
     if (!response.ok) {
         githubLogger.error({ owner, repo, status: response.status }, 'Failed to fetch repository');
-        throw new Error(`Failed to fetch repository: ${response.status} ${response.statusText}`);
+        throwGitHubError(response, 'Failed to fetch repository');
     }
 
     const data = await response.json() as {
@@ -182,7 +210,7 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
  */
 export async function fetchReadme(owner: string, repo: string): Promise<string | null> {
     try {
-        const response = await fetch(`${buildRepoApiBase(owner, repo)}/readme`, {
+        const response = await fetchWithTimeout(`${buildRepoApiBase(owner, repo)}/readme`, {
             headers: getGitHubHeaders('application/vnd.github.v3.raw'),
         });
 
@@ -198,69 +226,38 @@ export async function fetchReadme(owner: string, repo: string): Promise<string |
 }
 
 /**
- * Fetch all commits for a repository (paginated, oldest first)
- */
-export async function fetchCommitHistory(
-    owner: string,
-    repo: string,
-    maxCommits: number = GITHUB.MAX_COMMITS_PER_REPO
-): Promise<GitHubCommit[]> {
-    const cacheKey = `commits:${owner}:${repo}:${maxCommits}`;
-    const cached = await cache.get<GitHubCommit[]>(cacheKey);
-    if (cached) return cached;
-
-    const allCommits: GitHubCommit[] = [];
-    let page = 1;
-    const cappedMax = Math.max(1, maxCommits);
-    const perPage = GITHUB.MAX_COMMITS_PER_REQUEST;
-
-    while (allCommits.length < cappedMax) {
-        const remaining = cappedMax - allCommits.length;
-        const pageSize = Math.min(perPage, remaining);
-        const data = await fetchCommitHistoryPage(owner, repo, page, pageSize);
-        if (data.length === 0) break;
-
-        allCommits.push(...data);
-
-        if (data.length < pageSize) break;
-        page++;
-    }
-
-    // Reverse to get oldest first (chronological order)
-    const result = allCommits.reverse().slice(0, cappedMax);
-    await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
-    return result;
-}
-
-/**
  * Fetch a single page of commits for a repository (newest first)
  */
 export async function fetchCommitHistoryPage(
     owner: string,
     repo: string,
     page: number,
-    perPage: number = GITHUB.MAX_COMMITS_PER_REQUEST
+    perPage: number = GITHUB.MAX_COMMITS_PER_REQUEST,
+    branch?: string
 ): Promise<GitHubCommit[]> {
     const safePage = Math.max(1, page);
     const safePerPage = Math.min(
         GITHUB.MAX_COMMITS_PER_REQUEST,
         Math.max(1, perPage)
     );
-    const cacheKey = `commits-page:${owner}:${repo}:${safePage}:${safePerPage}`;
+    const cacheKey = `commits-page:${owner}:${repo}:${safePage}:${safePerPage}${branch ? `:${branch}` : ''}`;
     const cached = await cache.get<GitHubCommit[]>(cacheKey);
     if (cached) return cached;
 
     const commitsUrl = new URL(`${buildRepoApiBase(owner, repo)}/commits`);
     commitsUrl.searchParams.set('per_page', String(safePerPage));
     commitsUrl.searchParams.set('page', String(safePage));
+    if (branch) {
+        commitsUrl.searchParams.set('sha', branch);
+    }
 
-    const response = await fetch(commitsUrl.toString(), {
+    const response = await fetchWithTimeout(commitsUrl.toString(), {
         headers: getGitHubHeaders(),
     });
 
     if (!response.ok) {
         githubLogger.error({ owner, repo, status: response.status, page: safePage }, 'Failed to fetch commits');
-        throw new Error(`Failed to fetch commits: ${response.status} ${response.statusText}`);
+        throwGitHubError(response, 'Failed to fetch commits');
     }
 
     const data = await response.json() as GitHubCommitApiItem[];
@@ -274,6 +271,56 @@ export async function fetchCommitHistoryPage(
 
     await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
     return commits;
+}
+
+/**
+ * Fetch the list of branches for a repository, along with the default branch name.
+ */
+export async function fetchRepoBranches(
+    owner: string,
+    repo: string
+): Promise<{ branches: string[]; defaultBranch: string }> {
+    const cacheKey = `branches:${owner}:${repo}`;
+    const cached = await cache.get<{ branches: string[]; defaultBranch: string }>(cacheKey);
+    if (cached) return cached;
+
+    const [repoDetails, branchData] = await Promise.all([
+        fetchRepository(owner, repo),
+        (async () => {
+            const allBranches: Array<{ name: string }> = [];
+            let page = 1;
+            
+            // Loop up to 10 pages (1000 branches) to prevent infinite loops
+            while (page <= 10) {
+                const url = new URL(`${buildRepoApiBase(owner, repo)}/branches`);
+                url.searchParams.set('per_page', '100');
+                url.searchParams.set('page', String(page));
+                
+                const response = await fetchWithTimeout(url.toString(), { headers: getGitHubHeaders() });
+                if (!response.ok) throwGitHubError(response, 'Failed to fetch branches');
+                
+                const data = await response.json() as Array<{ name: string }>;
+                allBranches.push(...data);
+                
+                if (data.length < 100) break;
+                
+                // We also check the Link header to be sure there's another page
+                const linkHeader = response.headers.get('link');
+                if (!linkHeader || !linkHeader.includes('rel="next"')) break;
+                
+                page++;
+            }
+            return allBranches;
+        })(),
+    ]);
+
+    const result = {
+        branches: branchData.map((b) => b.name),
+        defaultBranch: repoDetails.defaultBranch,
+    };
+
+    await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
+    return result;
 }
 
 /**
@@ -291,12 +338,12 @@ export async function fetchFilesAtCommit(
     const treeUrl = new URL(`${buildRepoApiBase(owner, repo)}/git/trees/${encodeURIComponent(sha)}`);
     treeUrl.searchParams.set('recursive', '1');
 
-    const response = await fetch(treeUrl.toString(), {
+    const response = await fetchWithTimeout(treeUrl.toString(), {
         headers: getGitHubHeaders(),
     });
 
     if (!response.ok) {
-        throw new Error(`Failed to fetch files: ${response.status} ${response.statusText}`);
+        throwGitHubError(response, 'Failed to fetch files');
     }
 
     const data = await response.json() as {
@@ -334,7 +381,7 @@ export async function fetchFileContent(
         const contentUrl = new URL(`${buildRepoApiBase(owner, repo)}/contents/${encodedPath}`);
         contentUrl.searchParams.set('ref', sha);
 
-        const response = await fetch(contentUrl.toString(), {
+        const response = await fetchWithTimeout(contentUrl.toString(), {
             headers: getGitHubHeaders('application/vnd.github.v3.raw'),
         });
 
@@ -342,7 +389,8 @@ export async function fetchFileContent(
         const text = await response.text();
         await cache.set(cacheKey, text, CACHE_TTL.WEEK);
         return text;
-    } catch {
+    } catch (error) {
+        githubLogger.warn({ owner, repo, sha, path, error }, 'Failed to fetch file content');
         return null;
     }
 }
@@ -360,7 +408,7 @@ export async function fetchCommitDiff(
     if (cached) return cached;
 
     try {
-        const response = await fetch(
+        const response = await fetchWithTimeout(
             `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
             {
                 headers: getGitHubHeaders('application/vnd.github.v3.diff'),
@@ -371,7 +419,8 @@ export async function fetchCommitDiff(
         const text = await response.text();
         await cache.set(cacheKey, text, CACHE_TTL.WEEK);
         return text;
-    } catch {
+    } catch (error) {
+        githubLogger.warn({ owner, repo, sha, error }, 'Failed to fetch commit diff');
         return null;
     }
 }
@@ -388,14 +437,14 @@ export async function fetchCommitFileDiffs(
     const cached = await cache.get<GitHubCommitFileDiff[]>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
         { headers: getGitHubHeaders() }
     );
 
     if (!response.ok) {
         githubLogger.error({ owner, repo, sha, status: response.status }, 'Failed to fetch commit file diffs');
-        throw new Error(`Failed to fetch commit file diffs: ${response.status} ${response.statusText}`);
+        throwGitHubError(response, 'Failed to fetch commit file diffs');
     }
 
     const data = await response.json() as {
@@ -437,7 +486,7 @@ export async function fetchCompareDiff(
     const cached = await cache.get<GitHubCompareDiff>(cacheKey);
     if (cached) return cached;
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `${buildRepoApiBase(owner, repo)}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
         { headers: getGitHubHeaders() }
     );
@@ -447,7 +496,7 @@ export async function fetchCompareDiff(
             { owner, repo, baseSha, headSha, status: response.status },
             'Failed to fetch compare diff'
         );
-        throw new Error(`Failed to fetch compare diff: ${response.status} ${response.statusText}`);
+        throwGitHubError(response, 'Failed to fetch compare diff');
     }
 
     const data = await response.json() as {

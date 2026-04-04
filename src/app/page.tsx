@@ -1,6 +1,6 @@
-import { BookOpen } from 'lucide-react';
 import ClientHero from './ClientHero';
 import ClientSettingsHeader from './ClientSettingsHeader';
+import GrepbaseLogo from '@/components/GrepbaseLogo';
 import styles from './page.module.css';
 
 export default async function Home() {
@@ -8,7 +8,7 @@ export default async function Home() {
         <main className={styles.main}>
             <header className={styles.header}>
                 <div className={styles.logo}>
-                    <BookOpen size={28} />
+                    <GrepbaseLogo size={26} />
                     <span>Grepbase</span>
                 </div>
                 <ClientSettingsHeader />

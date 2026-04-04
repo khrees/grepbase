@@ -5,107 +5,51 @@ import { useRouter } from 'next/navigation';
 import { Key, Check, AlertCircle, Loader2, Sparkles, ArrowRight, RefreshCw } from 'lucide-react';
 import styles from './SetupFlow.module.css';
 import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
-import { secureStorage } from '@/lib/.client/secure-storage';
 import { api } from '@/lib/api-client';
+import {
+    useSettingsStore,
+    PROVIDERS,
+    type ProviderSettings,
+} from '@/stores/settings-store';
+import { useAICredentials } from '@/hooks/use-ai-credentials';
+import { useIngestJob } from '@/hooks/use-ingest-job';
 
 interface SetupFlowProps {
     repoUrl: string;
     onCancel: () => void;
 }
 
-interface ProviderSettings {
-    apiKey: string;
-    model: string;
-    baseUrl?: string;
-}
-
-interface PersistedProviderSettings {
-    model: string;
-    baseUrl?: string;
-}
-
-interface StoredSettings extends Record<AIProviderType, PersistedProviderSettings> {
-    activeProvider?: AIProviderType;
-}
-
 type SetupStep = 'config' | 'loading' | 'summary';
 
 import type { RepoData } from '@/types';
 
-const STORAGE_KEY = 'ai_settings';
-const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
-
-function getDefaultSettings(): Record<AIProviderType, ProviderSettings> {
-    return {
-        gemini: { apiKey: '', model: 'gemini-3.1-pro' },
-        openai: { apiKey: '', model: 'gpt-5.2' },
-        anthropic: { apiKey: '', model: 'claude-sonnet-4.6' },
-        ollama: { apiKey: '', model: 'llama-4-scout', baseUrl: 'http://localhost:11434/v1' },
-        lmstudio: { apiKey: '', model: 'deepseek-r1-distill-llama-8b', baseUrl: 'http://127.0.0.1:1234/v1' },
-        glm: { apiKey: '', model: 'glm-5', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
-        kimi: { apiKey: '', model: 'kimi-k2.5', baseUrl: 'https://api.moonshot.cn/v1' },
-    };
-}
-
-function mergePersistedSettings(
-    defaults: Record<AIProviderType, ProviderSettings>,
-    saved: Partial<Record<AIProviderType, PersistedProviderSettings>>
-): Record<AIProviderType, ProviderSettings> {
-    const merged: Record<AIProviderType, ProviderSettings> = { ...defaults };
-
-    for (const provider of PROVIDERS) {
-        const next = saved[provider];
-        if (!next) continue;
-        merged[provider] = {
-            ...merged[provider],
-            model: next.model || merged[provider].model,
-            baseUrl: next.baseUrl || merged[provider].baseUrl,
-            apiKey: '',
-        };
-    }
-
-    return merged;
-}
-
-function toPersistedSettings(
-    settings: Record<AIProviderType, ProviderSettings>
-): Record<AIProviderType, PersistedProviderSettings> {
-    return {
-        gemini: { model: settings.gemini.model, baseUrl: settings.gemini.baseUrl },
-        openai: { model: settings.openai.model, baseUrl: settings.openai.baseUrl },
-        anthropic: { model: settings.anthropic.model, baseUrl: settings.anthropic.baseUrl },
-        ollama: { model: settings.ollama.model, baseUrl: settings.ollama.baseUrl },
-        lmstudio: { model: settings.lmstudio.model, baseUrl: settings.lmstudio.baseUrl },
-        glm: { model: settings.glm.model, baseUrl: settings.glm.baseUrl },
-        kimi: { model: settings.kimi.model, baseUrl: settings.kimi.baseUrl },
-    };
-}
-
 export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     const router = useRouter();
     const [step, setStep] = useState<SetupStep>('config');
-    const [activeProvider, setActiveProvider] = useState<AIProviderType>('gemini');
-    const [settings, setSettings] = useState<Record<AIProviderType, ProviderSettings>>(getDefaultSettings);
+
+    // Settings from Zustand store
+    const {
+        settings,
+        activeProvider,
+        loadFromStorage,
+        setActiveProvider,
+        updateSetting,
+        persist,
+    } = useSettingsStore();
+
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
     const [testError, setTestError] = useState<string | null>(null);
-    const [storedCredentials, setStoredCredentials] = useState<Record<AIProviderType, boolean>>({
-        gemini: false,
-        openai: false,
-        anthropic: false,
-        ollama: false,
-        lmstudio: false,
-        glm: false,
-        kimi: false,
-    });
+
+    // AI credentials from query hook
+    const { data: storedCredentials } = useAICredentials();
 
     // Background fetch state
     const [repoData, setRepoData] = useState<RepoData | null>(null);
     const [fetchError, setFetchError] = useState<string | null>(null);
     const [fetchingRepo, setFetchingRepo] = useState(true);
     const [jobId, setJobId] = useState<string | null>(null);
-    const [jobProgress, setJobProgress] = useState(0);
     const fetchStarted = useRef(false);
 
     // AI Summary state
@@ -113,58 +57,16 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     const [generatingSummary, setGeneratingSummary] = useState(false);
     const summaryAbortRef = useRef<AbortController | null>(null);
 
-    // Load settings from secure storage and start fetching repo
-    useEffect(() => {
-        const sessionData = secureStorage.getSessionItem<StoredSettings>(STORAGE_KEY);
-        if (sessionData) {
-            const merged = mergePersistedSettings(getDefaultSettings(), sessionData);
-            const migrated: StoredSettings = {
-                ...toPersistedSettings(merged),
-                activeProvider: sessionData.activeProvider,
-            };
+    // Use ingest job polling
+    const { data: jobData } = useIngestJob(jobId, { enabled: fetchingRepo && !!jobId });
 
-            setSettings(merged);
-            secureStorage.setSessionItem(STORAGE_KEY, migrated);
-            secureStorage.setSecureItem(STORAGE_KEY, migrated);
-            if (migrated.activeProvider) setActiveProvider(migrated.activeProvider);
-            return;
-        }
-        // Load from encrypted storage (async)
-        secureStorage.getSecureItem<StoredSettings>(STORAGE_KEY).then(saved => {
-            if (saved) {
-                const merged = mergePersistedSettings(getDefaultSettings(), saved);
-                const migrated: StoredSettings = {
-                    ...toPersistedSettings(merged),
-                    activeProvider: saved.activeProvider,
-                };
+    // Load settings once
+    const settingsLoadedRef = useRef(false);
+    if (!settingsLoadedRef.current) {
+        settingsLoadedRef.current = true;
+        loadFromStorage();
+    }
 
-                setSettings(merged);
-                if (migrated.activeProvider) setActiveProvider(migrated.activeProvider);
-                secureStorage.setSessionItem(STORAGE_KEY, migrated);
-                secureStorage.setSecureItem(STORAGE_KEY, migrated);
-            }
-        });
-    }, []);
-
-    useEffect(() => {
-        api.get<{ providers?: Partial<Record<AIProviderType, boolean>> }>('/api/ai/credentials')
-            .then(response => {
-                if (!response.providers) return;
-                setStoredCredentials(prev => ({
-                    ...prev,
-                    ...response.providers,
-                }));
-            })
-            .catch(() => {
-                // Best effort only; UI can still proceed with manual API key entry.
-            });
-    }, []);
-
-    useEffect(() => {
-        return () => {
-            summaryAbortRef.current?.abort();
-        };
-    }, []);
 
     // Start background repo fetch immediately
     useEffect(() => {
@@ -180,21 +82,17 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                     cached?: boolean;
                 }>('/api/repos', { url: repoUrl });
 
-                // If cached, we have the data immediately
                 if (data.cached && data.repository) {
                     setRepoData(data.repository);
                     setFetchingRepo(false);
                     return;
                 }
 
-                // If queued, start polling for status
                 if (data.jobId) {
                     setJobId(data.jobId);
-                    // Polling will be handled by separate effect
                     return;
                 }
 
-                // Fallback: direct response (shouldn't happen with new queue system)
                 if (data.repository) {
                     setRepoData(data.repository);
                     setFetchingRepo(false);
@@ -208,69 +106,35 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         fetchRepo();
     }, [repoUrl]);
 
-    // Poll for job status
-    useEffect(() => {
-        if (!jobId) return;
+    // React to ingest job polling results — render-phase
+    const lastJobStatusRef = useRef<string | null>(null);
+    const jobStatus = jobData?.status ?? null;
+    if (jobData && jobStatus !== lastJobStatusRef.current) {
+        lastJobStatusRef.current = jobStatus;
+        const hasProcessedCommits = Number(jobData.processedCommits || 0) > 0;
+        const shouldResolve = jobData.status === 'completed' || jobData.ready || hasProcessedCommits;
 
-        const pollInterval = setInterval(async () => {
-            try {
-                const response = await api.get<{
-                    job?: {
-                        status: string;
-                        progress: number;
-                        error?: string;
-                        ready?: boolean;
-                        processedCommits?: number;
-                        repoId?: number | null;
-                        repository?: RepoData;
-                    };
-                    status?: string;
-                    progress?: number;
-                    error?: string;
-                    ready?: boolean;
-                    processedCommits?: number;
-                    repoId?: number | null;
-                    repository?: RepoData;
-                }>(`/api/jobs/${jobId}`);
-                const data = response.job ?? response;
-
-                setJobProgress(Number(data.progress || 0));
-                const hasProcessedCommits = Number(data.processedCommits || 0) > 0;
-                const shouldResolveRepository = data.status === 'completed' || data.ready || hasProcessedCommits;
-
-                let resolvedRepo = data.repository ?? null;
-                if (!resolvedRepo && shouldResolveRepository && data.repoId) {
-                    resolvedRepo = (await api.get<{ repository: RepoData }>(
-                        `/api/repos/${data.repoId}/commits?page=1&limit=1`
-                    )).repository;
-                }
-
-                if (shouldResolveRepository && resolvedRepo) {
+        if (shouldResolve && (jobData.repository || jobData.repoId)) {
+            const resolvedRepo = jobData.repository as RepoData | undefined;
+            if (resolvedRepo) {
+                Promise.resolve().then(() => {
                     setRepoData(resolvedRepo);
                     setFetchingRepo(false);
-                    clearInterval(pollInterval);
-                } else if (data.status === 'failed') {
-                    setFetchError(data.error || 'Failed to ingest repository');
+                });
+            } else if (jobData.repoId) {
+                api.get<{ repository: RepoData }>(
+                    `/api/repos/${jobData.repoId}/commits?page=1&limit=1`
+                ).then(response => {
+                    setRepoData(response.repository);
                     setFetchingRepo(false);
-                    clearInterval(pollInterval);
-                }
-            } catch (err) {
-                console.error('Failed to poll job status:', err);
+                }).catch(() => { /* Retry on next poll */ });
             }
-        }, 2000); // Poll every 2 seconds
-
-        return () => clearInterval(pollInterval);
-    }, [jobId]);
-
-    function updateSetting(provider: AIProviderType, key: keyof ProviderSettings, value: string) {
-        setSettings(prev => ({
-            ...prev,
-            [provider]: {
-                ...prev[provider],
-                [key]: value,
-            },
-        }));
-        setTestResult(null);
+        } else if (jobData.status === 'failed') {
+            Promise.resolve().then(() => {
+                setFetchError(jobData.error || 'Failed to ingest repository');
+                setFetchingRepo(false);
+            });
+        }
     }
 
     async function persistEnteredApiKeys(current: Record<AIProviderType, ProviderSettings>): Promise<void> {
@@ -325,16 +189,8 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
         try {
             await persistEnteredApiKeys(settings);
+            persist();
 
-            // Persist non-sensitive provider choices locally.
-            const data: StoredSettings = {
-                ...toPersistedSettings(settings),
-                activeProvider,
-            };
-            secureStorage.setSessionItem(STORAGE_KEY, data);
-            secureStorage.setSecureItem(STORAGE_KEY, data);
-
-            // Move to loading/summary step.
             setStep('loading');
             generateSummary();
         } catch (error) {
@@ -346,10 +202,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     }
 
     async function generateSummary() {
-        if (!repoData) {
-            // Wait for repo data
-            return;
-        }
+        if (!repoData) return;
 
         setGeneratingSummary(true);
         summaryAbortRef.current?.abort();
@@ -366,7 +219,6 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                 signal: abortController.signal,
             });
 
-            // Handle streaming response
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
 
@@ -385,7 +237,6 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                 return;
             }
             console.error('Summary generation failed:', err);
-            // Fall back to a basic summary
             setSummary(`**${repoData.name}** is a project by ${repoData.owner}.\n\n${repoData.description || 'No description available.'}\n\n*AI summary generation failed. Click "View Timeline" to explore the commit history.*`);
             setStep('summary');
         } finally {
@@ -395,13 +246,12 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         }
     }
 
-    // Wait for repo if in loading step and repo data arrives
-    useEffect(() => {
-        if (step === 'loading' && repoData && !generatingSummary && !summary) {
-            generateSummary();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [step, repoData, generatingSummary, summary]);
+    // Trigger summary when loading step + repo data ready — render-phase
+    const summaryTriggeredRef = useRef(false);
+    if (step === 'loading' && repoData && !generatingSummary && !summary && !summaryTriggeredRef.current) {
+        summaryTriggeredRef.current = true;
+        Promise.resolve().then(() => generateSummary());
+    }
 
     function viewTimeline() {
         if (repoData) {
@@ -412,8 +262,9 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     const currentSettings = settings[activeProvider];
     const models = getAvailableModels(activeProvider);
     const isLocalProvider = activeProvider === 'ollama' || activeProvider === 'lmstudio';
-    const hasStoredCredential = Boolean(storedCredentials[activeProvider]);
+    const hasStoredCredential = Boolean(storedCredentials?.[activeProvider]);
     const canContinue = isLocalProvider || hasStoredCredential || currentSettings.apiKey.trim().length > 10;
+    const jobProgress = jobData?.progress ? Number(jobData.progress) : 0;
 
     // Show error state if fetch failed
     if (fetchError && step === 'config') {

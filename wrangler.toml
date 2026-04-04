@@ -1,0 +1,8 @@
+name = "grepbase"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "grepbase_db"
+database_name = "326233af-b937-4c0b-ab47-7349f251b961"
+database_id = "326233af-b937-4c0b-ab47-7349f251b961"
+migrations_dir = "./drizzle"
