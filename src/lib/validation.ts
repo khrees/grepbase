@@ -90,6 +90,8 @@ export const explainRequestSchema = z.object({
 export const ingestRepoSchema = z.object({
     url: githubUrlSchema,
     branch: z.string().min(1).max(255).optional(),
+    startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
+    clearExisting: z.boolean().optional(),
 });
 
 // Pagination params

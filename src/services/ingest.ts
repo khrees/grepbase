@@ -24,6 +24,10 @@ interface IngestOptions {
     repoName?: string;
     /** Specific branch to ingest. Omit to use the repository's default branch. */
     branch?: string;
+    /** If true, deletes existing commits for the repository before fetching */
+    clearExisting?: boolean;
+    /** Specific commit SHA to start fetching backwards from */
+    startSha?: string;
 }
 
 export async function processRepoIngestion({
@@ -34,6 +38,8 @@ export async function processRepoIngestion({
     owner: ownerArg,
     repoName: repoNameArg,
     branch,
+    clearExisting,
+    startSha,
 }: IngestOptions): Promise<void> {
     const processLogger = logger.child({ jobId, url, clientId, worker: true });
 
@@ -123,6 +129,11 @@ export async function processRepoIngestion({
         await safeGrantRepoAccess(repoId, clientId);
 
         // 5. Fetch commits
+        if (clearExisting) {
+            processLogger.info({ repoId }, 'Clearing existing commits for sliding window ingestion');
+            await db.delete(commits).where(eq(commits.repoId, repoId));
+        }
+
         const maxCommits = Math.max(1, GITHUB.MAX_COMMITS_PER_REPO);
         await db.update(ingestJobs)
             .set({
@@ -134,7 +145,7 @@ export async function processRepoIngestion({
             })
             .where(eq(ingestJobs.jobId, jobId));
 
-        processLogger.debug({ owner, repoName, maxCommits }, 'Fetching commits in pages');
+        processLogger.debug({ owner, repoName, maxCommits, startSha }, 'Fetching commits in pages');
 
         const PER_PAGE = GITHUB.MAX_COMMITS_PER_REQUEST;
         let processedCommits = 0;
@@ -145,7 +156,9 @@ export async function processRepoIngestion({
         while (processedCommits < maxCommits) {
             const remaining = maxCommits - processedCommits;
             const pageSize = Math.min(PER_PAGE, remaining);
-            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize, branch);
+            // If startSha is provided, use it instead of branch to fetch from that specific point backwards
+            const targetRef = startSha || branch;
+            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize, targetRef);
 
             if (pageCommits.length === 0) {
                 expectedCommits = Math.max(1, processedCommits);

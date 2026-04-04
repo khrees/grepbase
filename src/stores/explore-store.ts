@@ -17,6 +17,7 @@ interface ExploreState {
   showSettings: boolean;
   showHistoryModal: boolean;
   showBranchMenu: boolean;
+  pinnedBaseSha: string | null;
 
   // Actions
   setCurrentIndex: (index: number) => void;
@@ -31,6 +32,7 @@ interface ExploreState {
   setShowSettings: (show: boolean) => void;
   setShowHistoryModal: (show: boolean) => void;
   setShowBranchMenu: (show: boolean) => void;
+  setPinnedBaseSha: (sha: string | null) => void;
 
   goToCommit: (index: number, totalCommits: number) => void;
   goNext: (totalCommits: number) => void;
@@ -53,6 +55,7 @@ const initialState = {
   showSettings: false,
   showHistoryModal: false,
   showBranchMenu: false,
+  pinnedBaseSha: null as string | null,
 };
 
 export const useExploreStore = create<ExploreState>((set) => ({
@@ -70,6 +73,7 @@ export const useExploreStore = create<ExploreState>((set) => ({
   setShowSettings: (show) => set({ showSettings: show }),
   setShowHistoryModal: (show) => set({ showHistoryModal: show }),
   setShowBranchMenu: (show) => set({ showBranchMenu: show }),
+  setPinnedBaseSha: (sha) => set({ pinnedBaseSha: sha }),
 
   goToCommit: (index, totalCommits) => {
     if (index < 0 || index >= totalCommits) return;

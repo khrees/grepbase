@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { url, branch } = parseResult.data;
+        const { url, branch, startSha, clearExisting } = parseResult.data;
         const sanitizedUrl = sanitizeGitHubUrl(url);
         const { owner, repo: repoName } = parseGitHubUrl(sanitizedUrl);
         // Non-default branches get their own DB entry keyed by URL@branch
@@ -243,6 +243,8 @@ export async function POST(request: NextRequest) {
                 owner,
                 repoName,
                 branch,
+                startSha,
+                clearExisting,
             }).catch((err) => {
                 logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
             });
@@ -268,7 +270,7 @@ export async function POST(request: NextRequest) {
                 void trackRepoIngestPromise;
             }
 
-            if (existingCommitCount > 0) {
+            if (existingCommitCount > 0 && !clearExisting) {
                 requestLogger.info({ owner, repo: repoName, duration }, 'Repository already cached, refreshing in background');
                 return finalizeSessionResponse(
                     session,
@@ -362,6 +364,8 @@ export async function POST(request: NextRequest) {
             owner,
             repoName,
             branch,
+            startSha,
+            clearExisting,
         }).catch((err) => {
             logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
         });

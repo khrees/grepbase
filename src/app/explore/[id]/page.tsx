@@ -178,12 +178,21 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         showSettings, setShowSettings,
         showHistoryModal, setShowHistoryModal,
         showBranchMenu, setShowBranchMenu,
+        pinnedBaseSha, setPinnedBaseSha,
         goToCommit, goNext, goPrev,
+        reset: resetExploreStore,
     } = useExploreStore();
+
+    // Reset UI state whenever the viewed repository changes
+    useEffect(() => {
+        resetExploreStore();
+    }, [id, resetExploreStore]);
 
     // Local state (not shareable)
     const [switchingBranch, setSwitchingBranch] = useState(false);
+    const [switchBranchJobId, setSwitchBranchJobId] = useState<string | null>(null);
     const [syncing, setSyncing] = useState(false);
+    const [resyncJobId, setResyncJobId] = useState<string | null>(null);
     const branchMenuRef = useRef<HTMLDivElement>(null);
 
     // ── React Query: Commits ─────────────────────────────────
@@ -191,30 +200,60 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const repository = commitsQuery.data?.repository ?? null;
     const commits = useMemo(() => commitsQuery.data?.commits ?? [], [commitsQuery.data?.commits]);
 
-    // Auto-fetch remaining pages (absorbed from useEffect)
-    if (commitsQuery.hasNextPage && !commitsQuery.isFetchingNextPage) {
-        // Schedule on next microtask to avoid rendering-phase side effects
-        Promise.resolve().then(() => commitsQuery.fetchNextPage());
-    }
+    // Auto-fetch remaining pages
+    const { hasNextPage, isFetchingNextPage, fetchNextPage } = commitsQuery;
+    useEffect(() => {
+        if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
     // ── Ingest job polling ────────────────────────────────────
     const waitingForCommits = !!ingestJobId && commits.length === 0 && !commitsQuery.isLoading;
     const ingestJob = useIngestJob(ingestJobId, { enabled: waitingForCommits });
 
-    // When ingest progresses, refetch commits (derived from query data, no effect needed)
+    // When ingest progresses, refetch commits
     const ingestJobData = ingestJob.data;
-    const ingestTriggeredRefetch = useRef(false);
-    if (ingestJobData && !ingestTriggeredRefetch.current) {
+    const { refetch: refetchCommits } = commitsQuery;
+    useEffect(() => {
+        if (!ingestJobData) return;
         const hasProcessed = Number(ingestJobData.processedCommits || 0) > 0;
         const shouldRefetch = (ingestJobData.repository || ingestJobData.repoId) &&
             (ingestJobData.ready || hasProcessed || ingestJobData.status === 'completed');
-        if (shouldRefetch) {
-            ingestTriggeredRefetch.current = true;
-            Promise.resolve().then(() => commitsQuery.refetch());
+        if (shouldRefetch) refetchCommits();
+    }, [ingestJobData, refetchCommits]);
+
+    // ── Resync job polling ────────────────────────────────────
+    const resyncJob = useIngestJob(resyncJobId, { enabled: !!resyncJobId });
+    useEffect(() => {
+        if (!resyncJobId || !resyncJob.data) return;
+        const job = resyncJob.data;
+        const hasProcessed = Number(job.processedCommits || 0) > 0;
+        if (job.status === 'completed' || job.ready || hasProcessed) {
+            refetchCommits();
+            setSyncing(false);
+            setResyncJobId(null);
+            fireToast('Repository synced', 'success');
+        } else if (job.status === 'failed') {
+            fireToast(job.error || 'Resync failed', 'error');
+            setSyncing(false);
+            setResyncJobId(null);
         }
-    }
-    // Reset trigger when job data changes
-    if (!ingestJobData) ingestTriggeredRefetch.current = false;
+    }, [resyncJob.data, resyncJobId, refetchCommits]);
+
+    // ── Branch-switch job polling ─────────────────────────────
+    const switchBranchJob = useIngestJob(switchBranchJobId, { enabled: !!switchBranchJobId });
+    useEffect(() => {
+        if (!switchBranchJobId || !switchBranchJob.data) return;
+        const job = switchBranchJob.data;
+        const resolvedId = job.repository?.id ?? job.repoId;
+        if (resolvedId) {
+            setSwitchBranchJobId(null);
+            router.push(`/explore/${resolvedId}?jobId=${switchBranchJobId}`);
+        } else if (job.status === 'failed') {
+            fireToast('Failed to load branch', 'error');
+            setSwitchingBranch(false);
+            setSwitchBranchJobId(null);
+        }
+    }, [switchBranchJob.data, switchBranchJobId, router]);
 
     // ── Derived state ────────────────────────────────────────
     const currentCommit = commits[currentIndex];
@@ -246,24 +285,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return commits[Math.max(0, currentIndex - 1)]?.sha || commits[0].sha;
     }, [commits, currentIndex]);
 
-    const defaultCompareHeadSha = useMemo(() => {
-        if (commits.length === 0) return '';
-        return commits[currentIndex]?.sha || commits[commits.length - 1].sha;
-    }, [commits, currentIndex]);
+    const defaultCompareHeadSha = currentCommitSha || '';
 
-    // User can override; reset when currentIndex changes
-    const [compareBaseShaOverride, setCompareBaseSha] = useState('');
-    const [compareHeadShaOverride, setCompareHeadSha] = useState('');
-    const compareBaseSha = compareBaseShaOverride || defaultCompareBaseSha;
-    const compareHeadSha = compareHeadShaOverride || defaultCompareHeadSha;
-
-    // Reset overrides when navigating commits
-    const prevIndexRef = useRef(currentIndex);
-    if (prevIndexRef.current !== currentIndex) {
-        prevIndexRef.current = currentIndex;
-        if (compareBaseShaOverride) setCompareBaseSha('');
-        if (compareHeadShaOverride) setCompareHeadSha('');
-    }
+    // Set compareBaseSha from Pinned state or fallback to default
+    const compareBaseSha = pinnedBaseSha || defaultCompareBaseSha;
+    const compareHeadSha = defaultCompareHeadSha;
 
     // ── React Query: Branches ────────────────────────────────
     const branchesQuery = useBranches(baseRepoUrl || undefined, {
@@ -330,29 +356,25 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         { enabled: centerView === 'diff' && diffScope === 'compare' && !!selectedFile }
     );
 
-    // ── Commit persistence (custom hook — 1 init effect) ─────
+    // ── Commit persistence ───────────────────────────────────
     const { persist: persistCommit } = useCommitPersistence(commits, id, setCurrentIndex);
 
-    // Persist whenever currentCommit changes — imperative, not effect
-    const lastPersistedSha = useRef<string | null>(null);
-    if (currentCommitSha && currentCommitSha !== lastPersistedSha.current) {
-        lastPersistedSha.current = currentCommitSha;
+    useEffect(() => {
+        if (!currentCommitSha) return;
         persistCommit(currentCommitSha);
-    }
+    }, [currentCommitSha, persistCommit]);
 
-    // ── AI settings hint (one-time, run in render) ───────────
-    const hintShownRef = useRef(false);
-    if (!hintShownRef.current && !commitsQuery.isLoading && typeof window !== 'undefined') {
-        hintShownRef.current = true;
+    // ── AI settings hint (once per session after first load) ─
+    const { isLoading: commitsLoading } = commitsQuery;
+    useEffect(() => {
+        if (commitsLoading || typeof window === 'undefined') return;
         const hintKey = 'grepbase:ai_hint_shown';
         if (!sessionStorage.getItem(hintKey) && !getAISettings()) {
             sessionStorage.setItem(hintKey, '1');
-            // Schedule after render to avoid setState-in-render
-            Promise.resolve().then(() =>
-                fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000)
-            );
+            fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000);
         }
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [commitsLoading]);
 
     // ── DOM hooks (2 legitimate effects) ─────────────────────
     useClickOutside(branchMenuRef, showBranchMenu, useCallback(() => setShowBranchMenu(false), [setShowBranchMenu]));
@@ -385,16 +407,58 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         if (firstInDirectory) { selectFile(firstInDirectory); }
     }, [filePathMap, files, selectFile]);
 
+    const handleLoadOlder = useCallback(async () => {
+        if (!repository || commits.length === 0 || syncing) return;
+        setSyncing(true);
+        const oldestSha = commits[commits.length - 1].sha;
+
+        try {
+            const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
+                url: `github.com/${repository.owner}/${repository.name}`,
+                branch: activeBranch || undefined,
+                startSha: oldestSha,
+                clearExisting: true
+            });
+
+            if (data.jobId) {
+                router.replace(`/explore/${id}?jobId=${data.jobId}`);
+            }
+        } catch (error) {
+            fireToast('Failed to load older commits', 'error');
+        } finally {
+            setSyncing(false);
+        }
+    }, [repository, commits, activeBranch, id, router, syncing]);
+
+    const handleLoadNewer = useCallback(async () => {
+        // To load newer commits, we just do a fresh sync without a startSha (starts from HEAD)
+        if (!repository || syncing) return;
+        setSyncing(true);
+        try {
+            const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
+                url: `github.com/${repository.owner}/${repository.name}`,
+                branch: activeBranch || undefined,
+                clearExisting: true
+            });
+
+            if (data.jobId) {
+                router.replace(`/explore/${id}?jobId=${data.jobId}`);
+            }
+        } catch (error) {
+            fireToast('Failed to load newer commits', 'error');
+        } finally {
+            setSyncing(false);
+        }
+    }, [repository, activeBranch, id, router, syncing]);
+
     // ── Branch switching ─────────────────────────────────────
     const switchBranch = useCallback(async (branch: string) => {
         if (!baseRepoUrl || branch === activeBranch || switchingBranch) return;
         setShowBranchMenu(false);
         setSwitchingBranch(true);
-
         try {
             const isDefault = branch === (repository?.defaultBranch || 'main');
             const body = isDefault ? { url: baseRepoUrl } : { url: baseRepoUrl, branch };
-
             const data = await api.post<{
                 jobId?: string;
                 repository?: { id: string };
@@ -408,27 +472,9 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                     : `/explore/${targetId}`
                 );
             } else if (data.jobId) {
-                let attempts = 0;
-                const poll = async (): Promise<void> => {
-                    attempts++;
-                    const job = await api.get<{ status: string; repoId?: string; repository?: { id: string } }>(
-                        `/api/jobs/${data.jobId}`
-                    );
-                    const resolvedId = job.repository?.id ?? job.repoId;
-                    if (resolvedId) {
-                        router.push(`/explore/${resolvedId}?jobId=${data.jobId}`);
-                    } else if (job.status === 'failed') {
-                        fireToast('Failed to load branch', 'error');
-                        setSwitchingBranch(false);
-                    } else if (attempts < 30) {
-                        await new Promise(r => setTimeout(r, 2000));
-                        return poll();
-                    } else {
-                        fireToast('Branch load timed out', 'error');
-                        setSwitchingBranch(false);
-                    }
-                };
-                await poll();
+                setSwitchBranchJobId(data.jobId);
+            } else {
+                setSwitchingBranch(false);
             }
         } catch (err) {
             fireToast(err instanceof Error ? err.message : 'Failed to switch branch', 'error');
@@ -440,52 +486,22 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const handleResync = useCallback(async () => {
         if (!repository || syncing) return;
         setSyncing(true);
-
         try {
             const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
                 url: `github.com/${repository.owner}/${repository.name}`,
             });
-
             if (data.jobId) {
-                let attempts = 0;
-                const maxAttempts = 60;
-                const poll = async (): Promise<void> => {
-                    attempts += 1;
-                    try {
-                        const jobResponse = await api.get<{
-                            status: string; error?: string; ready?: boolean; processedCommits?: number;
-                        }>(`/api/jobs/${data.jobId}`);
-
-                        const hasProcessedCommits = Number(jobResponse.processedCommits || 0) > 0;
-                        if (jobResponse.status === 'completed' || jobResponse.ready || hasProcessedCommits) {
-                            await commitsQuery.refetch();
-                            setSyncing(false);
-                            fireToast('Repository synced', 'success');
-                        } else if (jobResponse.status === 'failed') {
-                            fireToast(jobResponse.error || 'Resync failed', 'error');
-                            setSyncing(false);
-                        } else if (attempts < maxAttempts) {
-                            setTimeout(poll, 2000);
-                        } else {
-                            fireToast('Resync timed out. Try again.', 'error');
-                            setSyncing(false);
-                        }
-                    } catch (pollError) {
-                        console.error('Polling error:', pollError);
-                        fireToast('Resync failed. Check your connection.', 'error');
-                        setSyncing(false);
-                    }
-                };
-                void poll();
+                setResyncJobId(data.jobId);
             } else {
-                await commitsQuery.refetch();
+                await refetchCommits();
                 setSyncing(false);
+                fireToast('Repository synced', 'success');
             }
         } catch (err) {
             fireToast(err instanceof Error ? err.message : 'Failed to resync repository', 'error');
             setSyncing(false);
         }
-    }, [commitsQuery, repository, syncing]);
+    }, [refetchCommits, repository, syncing]);
 
     // ──────────────────────────────────────────────────────────
     // Render
@@ -700,6 +716,13 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         commits={orderedCommits}
                                         currentIndex={commitOrder === 'asc' ? currentIndex : commits.length - 1 - currentIndex}
                                         onSelect={(displayIdx) => goToCommit(commitOrder === 'asc' ? displayIdx : commits.length - 1 - displayIdx, commits.length)}
+                                        pinnedBaseSha={pinnedBaseSha}
+                                        onPinAsBase={setPinnedBaseSha}
+                                        onLoadOlder={handleLoadOlder}
+                                        onLoadNewer={handleLoadNewer}
+                                        hasMoreOlder={commits.length >= 5000}
+                                        hasMoreNewer={true} // Allow jump to present
+                                        loadingCommits={syncing || !!ingestJobId}
                                     />
                                 ) : loadingFiles ? (
                                     <div className={styles.loadingFiles}>
@@ -824,27 +847,15 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                                 </div>
                                             ) : (
                                                 <div className={styles.diffToolbarControls}>
-                                                    <label className={styles.diffSelectLabel}>
-                                                        Base
-                                                        <select value={compareBaseSha} onChange={event => setCompareBaseSha(event.target.value)}>
-                                                            {commits.map((commit, index) => (
-                                                                <option key={`base-${commit.sha}`} value={commit.sha}>
-                                                                    {index + 1}. {commit.sha.slice(0, 7)} — {commit.message.split('\n')[0].slice(0, 40)}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </label>
+                                                    <span className={styles.diffRangeLabel}>Base:</span>
+                                                    <code className={styles.diffShaBadge} title="Pinned Base (Set in timeline)">
+                                                        {compareBaseSha ? compareBaseSha.slice(0, 7) : 'None'}
+                                                    </code>
                                                     <span className={styles.diffRange}>...</span>
-                                                    <label className={styles.diffSelectLabel}>
-                                                        Head
-                                                        <select value={compareHeadSha} onChange={event => setCompareHeadSha(event.target.value)}>
-                                                            {commits.map((commit, index) => (
-                                                                <option key={`head-${commit.sha}`} value={commit.sha}>
-                                                                    {index + 1}. {commit.sha.slice(0, 7)} — {commit.message.split('\n')[0].slice(0, 40)}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </label>
+                                                    <span className={styles.diffRangeLabel}>Head:</span>
+                                                    <code className={styles.diffShaBadge}>
+                                                        {compareHeadSha ? compareHeadSha.slice(0, 7) : 'None'}
+                                                    </code>
                                                 </div>
                                             )}
 

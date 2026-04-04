@@ -120,3 +120,82 @@
     text-align: center;
     gap: var(--space-md);
 }
+
+/* wrapper */
+.timelineItemWrapper {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+}
+
+.timelineItemWrapper:hover .pinButton {
+    opacity: 1;
+}
+
+.pinButton {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: var(--timeline-muted);
+    opacity: 0;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    padding: 6px;
+    border-radius: 4px;
+}
+
+.pinButton:hover {
+    color: #69d1ff;
+    background: rgba(105, 209, 255, 0.1);
+}
+
+.pinButton.pinned {
+    opacity: 1;
+    color: #ffd700;
+}
+
+.pinIconActive {
+    fill: #ffd700;
+}
+
+/* Load more */
+.loadMoreButton {
+    width: 100%;
+    margin-top: var(--space-md);
+    padding: var(--space-sm);
+    background: transparent;
+    border: 1px dashed var(--timeline-border);
+    border-radius: var(--radius-md);
+    color: var(--timeline-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.loadMoreButton:hover:not(:disabled) {
+    background: var(--timeline-hover);
+    color: var(--timeline-text);
+    border-color: #69d1ff;
+}
+
+.loadMoreButton:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.spinner {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
