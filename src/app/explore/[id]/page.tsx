@@ -7,10 +7,10 @@ import {
     ChevronLeft,
     ChevronRight,
     Home,
+    Search,
     Settings,
     Loader2,
     GitCommit,
-    User,
     Calendar,
     Maximize2,
     Minimize2,
@@ -25,7 +25,7 @@ import CodeViewer from '@/components/CodeViewer';
 import AIPanel from '@/components/AIPanel';
 import FileTree from '@/components/FileTree';
 import CommitHistoryModal from '@/components/CommitHistoryModal';
-import CommitTimeline from '@/components/CommitTimeline';
+import CommitSearchPalette from '@/components/CommitSearchPalette';
 import DiffViewer from '@/components/DiffViewer';
 import StoryModePanel from '@/components/StoryModePanel';
 import { api } from '@/lib/api-client';
@@ -68,10 +68,17 @@ function useKeyboardNav(
     goNext: (n: number) => void,
     goPrev: () => void,
     setCenterView: (v: 'code' | 'diff' | 'story') => void,
+    setShowSearchPalette: (show: boolean) => void,
     blocked: boolean,
 ) {
     useEffect(() => {
         function handler(e: KeyboardEvent) {
+            // ⌘K / Ctrl+K opens search palette (always, even when blocked)
+            if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                setShowSearchPalette(true);
+                return;
+            }
             if (blocked) return;
             const tag = (e.target as HTMLElement).tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
@@ -84,7 +91,7 @@ function useKeyboardNav(
         }
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
-    }, [blocked, commitsLength, goNext, goPrev, setCenterView]);
+    }, [blocked, commitsLength, goNext, goPrev, setCenterView, setShowSearchPalette]);
 }
 
 /** Persist & restore commit selection to URL + storage */
@@ -169,8 +176,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         currentIndex, setCurrentIndex,
         selectedFile, setSelectedFile,
         centerView, setCenterView,
-        sidebarTab, setSidebarTab,
-        commitOrder, setCommitOrder,
         diffScope, setDiffScope,
         diffViewMode, setDiffViewMode,
         focusMode, toggleFocusMode,
@@ -178,7 +183,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         showSettings, setShowSettings,
         showHistoryModal, setShowHistoryModal,
         showBranchMenu, setShowBranchMenu,
-        pinnedBaseSha, setPinnedBaseSha,
+        showSearchPalette, setShowSearchPalette,
+        pinnedBaseSha,
         goToCommit, goNext, goPrev,
         reset: resetExploreStore,
     } = useExploreStore();
@@ -189,6 +195,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     }, [id, resetExploreStore]);
 
     // Local state (not shareable)
+    const [historyInitialDate, setHistoryInitialDate] = useState<Date | null>(null);
     const [switchingBranch, setSwitchingBranch] = useState(false);
     const [switchBranchJobId, setSwitchBranchJobId] = useState<string | null>(null);
     const [syncing, setSyncing] = useState(false);
@@ -274,10 +281,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         return atIdx !== -1 ? url.slice(0, atIdx) : url;
     }, [repository]);
 
-    const orderedCommits = useMemo(
-        () => commitOrder === 'asc' ? commits : [...commits].reverse(),
-        [commits, commitOrder]
-    );
 
     // Compare SHAs — derived with useMemo, not synced via useEffect
     const defaultCompareBaseSha = useMemo(() => {
@@ -356,6 +359,25 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         { enabled: centerView === 'diff' && diffScope === 'compare' && !!selectedFile }
     );
 
+    // ── Skip empty commits on initial load ───────────────────
+    // If the landing commit has no files, advance until we find one that does.
+    // The ref locks after the first commit-with-files is found so manual
+    // navigation to an empty commit later doesn't auto-jump the user away.
+    const foundFilesRef = useRef(false);
+    useEffect(() => {
+        if (foundFilesRef.current) return;
+        if (filesQuery.isLoading || filesQuery.isError) return;
+        if (files.length > 0) {
+            foundFilesRef.current = true;
+            return;
+        }
+        if (currentIndex < commits.length - 1) {
+            setCurrentIndex(currentIndex + 1);
+        } else {
+            foundFilesRef.current = true; // all commits empty, give up
+        }
+    }, [files, filesQuery.isLoading, filesQuery.isError, currentIndex, commits.length, setCurrentIndex]);
+
     // ── Commit persistence ───────────────────────────────────
     const { persist: persistCommit } = useCommitPersistence(commits, id, setCurrentIndex);
 
@@ -378,7 +400,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
     // ── DOM hooks (2 legitimate effects) ─────────────────────
     useClickOutside(branchMenuRef, showBranchMenu, useCallback(() => setShowBranchMenu(false), [setShowBranchMenu]));
-    useKeyboardNav(commits.length, goNext, goPrev, setCenterView, showSettings || showHistoryModal);
+    useKeyboardNav(commits.length, goNext, goPrev, setCenterView, setShowSearchPalette, showSettings || showHistoryModal || showSearchPalette);
 
     // ── File opening from AI references ──────────────────────
     const openFileFromAIReference = useCallback(async (path: string) => {
@@ -407,49 +429,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         if (firstInDirectory) { selectFile(firstInDirectory); }
     }, [filePathMap, files, selectFile]);
 
-    const handleLoadOlder = useCallback(async () => {
-        if (!repository || commits.length === 0 || syncing) return;
-        setSyncing(true);
-        const oldestSha = commits[commits.length - 1].sha;
-
-        try {
-            const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
-                url: `github.com/${repository.owner}/${repository.name}`,
-                branch: activeBranch || undefined,
-                startSha: oldestSha,
-                clearExisting: true
-            });
-
-            if (data.jobId) {
-                router.replace(`/explore/${id}?jobId=${data.jobId}`);
-            }
-        } catch (error) {
-            fireToast('Failed to load older commits', 'error');
-        } finally {
-            setSyncing(false);
-        }
-    }, [repository, commits, activeBranch, id, router, syncing]);
-
-    const handleLoadNewer = useCallback(async () => {
-        // To load newer commits, we just do a fresh sync without a startSha (starts from HEAD)
-        if (!repository || syncing) return;
-        setSyncing(true);
-        try {
-            const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
-                url: `github.com/${repository.owner}/${repository.name}`,
-                branch: activeBranch || undefined,
-                clearExisting: true
-            });
-
-            if (data.jobId) {
-                router.replace(`/explore/${id}?jobId=${data.jobId}`);
-            }
-        } catch (error) {
-            fireToast('Failed to load newer commits', 'error');
-        } finally {
-            setSyncing(false);
-        }
-    }, [repository, activeBranch, id, router, syncing]);
 
     // ── Branch switching ─────────────────────────────────────
     const switchBranch = useCallback(async (branch: string) => {
@@ -654,6 +633,13 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
                 <div className={styles.headerRight}>
                     <button
+                        className={`btn btn-ghost ${styles.headerBtn}`}
+                        onClick={() => setShowSearchPalette(true)}
+                        title="Search commits (⌘K)"
+                    >
+                        <Search size={15} />
+                    </button>
+                    <button
                         className={`btn btn-ghost ${styles.headerBtn} ${syncing ? styles.active : ''}`}
                         onClick={handleResync}
                         disabled={syncing}
@@ -680,51 +666,8 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                 <PanelGroup direction="horizontal" className={styles.group}>
                     {!focusMode && (
                         <Panel defaultSize={18} minSize={14} maxSize={28} className={styles.panel} id="left">
-                            <div className={styles.sidebarTabStrip}>
-                                <button
-                                    className={`${styles.sidebarTabBtn} ${sidebarTab === 'commits' ? styles.sidebarTabActive : ''}`}
-                                    onClick={() => setSidebarTab('commits')}
-                                >
-                                    Commits
-                                </button>
-                                <button
-                                    className={`${styles.sidebarTabBtn} ${sidebarTab === 'files' ? styles.sidebarTabActive : ''}`}
-                                    onClick={() => setSidebarTab('files')}
-                                >
-                                    Files
-                                </button>
-                            </div>
-                            {sidebarTab === 'commits' && (
-                                <div className={styles.commitSortBar}>
-                                    <button
-                                        className={`${styles.commitSortBtn} ${commitOrder === 'asc' ? styles.commitSortActive : ''}`}
-                                        onClick={() => { setCommitOrder('asc'); setCurrentIndex(0); }}
-                                    >
-                                        ↑ Oldest
-                                    </button>
-                                    <button
-                                        className={`${styles.commitSortBtn} ${commitOrder === 'desc' ? styles.commitSortActive : ''}`}
-                                        onClick={() => { setCommitOrder('desc'); setCurrentIndex(commits.length - 1); }}
-                                    >
-                                        ↓ Newest
-                                    </button>
-                                </div>
-                            )}
                             <div className={styles.sidebarContent}>
-                                {sidebarTab === 'commits' ? (
-                                    <CommitTimeline
-                                        commits={orderedCommits}
-                                        currentIndex={commitOrder === 'asc' ? currentIndex : commits.length - 1 - currentIndex}
-                                        onSelect={(displayIdx) => goToCommit(commitOrder === 'asc' ? displayIdx : commits.length - 1 - displayIdx, commits.length)}
-                                        pinnedBaseSha={pinnedBaseSha}
-                                        onPinAsBase={setPinnedBaseSha}
-                                        onLoadOlder={handleLoadOlder}
-                                        onLoadNewer={handleLoadNewer}
-                                        hasMoreOlder={commits.length >= 5000}
-                                        hasMoreNewer={true} // Allow jump to present
-                                        loadingCommits={syncing || !!ingestJobId}
-                                    />
-                                ) : loadingFiles ? (
+                                {loadingFiles ? (
                                     <div className={styles.loadingFiles}>
                                         <Loader2 size={24} className={styles.spinner} />
                                     </div>
@@ -736,55 +679,50 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     />
                                 )}
                             </div>
-                            <div className={styles.sidebarFooter}>
-                                <button
-                                    className={styles.sidebarFooterBtn}
-                                    onClick={() => setShowHistoryModal(true)}
-                                >
-                                    <Calendar size={13} />
-                                    Calendar
-                                </button>
-                            </div>
                         </Panel>
                     )}
 
                     {!focusMode && <PanelResizeHandle className={styles.resizeHandle} />}
 
                     <Panel defaultSize={60} minSize={30} className={styles.panel} id="code">
-                        <div className={styles.commitStrip}>
-                            <div className={styles.commitSha}>
-                                <GitCommit size={12} />
-                                <code>{currentCommit.sha.substring(0, 7)}</code>
-                            </div>
-                            <span className={styles.commitAuthor}>
-                                <User size={12} />
-                                {currentCommit.authorName || 'Unknown'}
-                            </span>
-                            <span className={styles.commitDate}>
-                                <Calendar size={12} />
-                                {new Date(currentCommit.date).toLocaleDateString()}
-                            </span>
-                        </div>
-
                         <div className={styles.viewTabs}>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'code' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('code')}
-                            >
-                                Code
-                            </button>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'diff' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('diff')}
-                            >
-                                Diff
-                            </button>
-                            <button
-                                className={`${styles.viewTab} ${centerView === 'story' ? styles.viewTabActive : ''}`}
-                                onClick={() => setCenterView('story')}
-                            >
-                                Story
-                            </button>
+                            <div className={styles.viewTabsLeft}>
+                                <button
+                                    className={`${styles.viewTab} ${centerView === 'code' ? styles.viewTabActive : ''}`}
+                                    onClick={() => setCenterView('code')}
+                                >
+                                    Code
+                                </button>
+                                <button
+                                    className={`${styles.viewTab} ${centerView === 'diff' ? styles.viewTabActive : ''}`}
+                                    onClick={() => setCenterView('diff')}
+                                >
+                                    Diff
+                                </button>
+                                <button
+                                    className={`${styles.viewTab} ${centerView === 'story' ? styles.viewTabActive : ''}`}
+                                    onClick={() => setCenterView('story')}
+                                >
+                                    Story
+                                </button>
+                            </div>
+                            <div className={styles.commitMeta}>
+                                <div className={styles.commitSha}>
+                                    <GitCommit size={11} />
+                                    <code>{currentCommit.sha.substring(0, 7)}</code>
+                                </div>
+                                <span className={styles.commitAuthor}>
+                                    {currentCommit.authorName || 'Unknown'}
+                                </span>
+                                <button
+                                    className={styles.commitDateBtn}
+                                    onClick={() => { setHistoryInitialDate(new Date(currentCommit.date)); setShowHistoryModal(true); }}
+                                    title="Browse commit calendar"
+                                >
+                                    <Calendar size={11} />
+                                    {new Date(currentCommit.date).toLocaleDateString()}
+                                </button>
+                            </div>
                         </div>
 
                         <div className={styles.codeArea}>
@@ -1002,14 +940,24 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             {showHistoryModal && (
                 <CommitHistoryModal
                     isOpen={showHistoryModal}
-                    onClose={() => setShowHistoryModal(false)}
+                    onClose={() => { setShowHistoryModal(false); setHistoryInitialDate(null); }}
                     commits={commits}
                     currentIndex={currentIndex}
                     onSelectCommit={(idx) => goToCommit(idx, commits.length)}
+                    initialDate={historyInitialDate}
                 />
             )}
 
             <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+
+            <CommitSearchPalette
+                isOpen={showSearchPalette}
+                onClose={() => setShowSearchPalette(false)}
+                commits={commits}
+                repoId={id}
+                currentIndex={currentIndex}
+                onSelectCommit={(idx) => goToCommit(idx, commits.length)}
+            />
         </div>
     );
 }

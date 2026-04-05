@@ -87,7 +87,7 @@
     border-radius: 999px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 0.66rem;
+    font-size: 0.72rem;
     color: #e4f6ff;
     background: rgba(40, 184, 255, 0.22);
     border: 1px solid rgba(40, 184, 255, 0.34);
@@ -186,6 +186,10 @@
     display: block;
     padding: 0 16px;
     white-space: pre;
+}
+
+.wrapLines {
+    min-width: unset;
 }
 
 .wrapLines .lineContent {

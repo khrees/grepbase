@@ -39,7 +39,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(47, 156, 255, 0.12);
     border-radius: 50%;
     margin-bottom: var(--space-lg);
     color: var(--accent-primary);

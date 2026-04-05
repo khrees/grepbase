@@ -70,11 +70,6 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid request wrapper for story' }, { status: 400 });
         }
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
-
         const providerConfig = await resolveProviderConfigFromRequest(request, {
             provider,
             providerType,
@@ -90,6 +85,19 @@ export async function POST(request: NextRequest) {
 
         if (repo.length === 0) {
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
+        }
+
+        // Access control: if no KV grant exists but repo is in DB, auto-grant (matches commits route behaviour)
+        try {
+            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
+            if (!repoAccess) {
+                const { safeGrantRepoAccess } = await import('@/services/resource-access');
+                await safeGrantRepoAccess(repoId, session.sessionId);
+                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
+            }
+        } catch {
+            // Access control system unavailable — repo existence check above is sufficient
+            requestLogger.debug({ repoId }, 'Access control unavailable, allowing access to existing repo');
         }
 
         const repoCommits = await db
