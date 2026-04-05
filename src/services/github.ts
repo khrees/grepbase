@@ -4,7 +4,7 @@
  */
 
 import { cache } from './cache';
-import { CACHE_TTL, GITHUB, TIMEOUTS } from '@/lib/constants';
+import { CACHE_TIER, GITHUB, TIMEOUTS } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { getPlatformEnv } from '@/lib/platform/context';
 
@@ -200,7 +200,7 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
         size: data.size,
     };
 
-    await cache.set(cacheKey, result, CACHE_TTL.HOUR);
+    await cache.set(cacheKey, result, CACHE_TIER.MEDIUM);
     githubLogger.debug({ owner, repo }, 'Repository cached');
     return result;
 }
@@ -269,7 +269,7 @@ export async function fetchCommitHistoryPage(
         date: new Date(commit.commit.author?.date || commit.commit.committer?.date || new Date()),
     }));
 
-    await cache.set(cacheKey, commits, CACHE_TTL.MINUTE * 5);
+    await cache.set(cacheKey, commits, CACHE_TIER.FAST);
     return commits;
 }
 
@@ -319,7 +319,7 @@ export async function fetchRepoBranches(
         defaultBranch: repoDetails.defaultBranch,
     };
 
-    await cache.set(cacheKey, result, CACHE_TTL.MINUTE * 5);
+    await cache.set(cacheKey, result, CACHE_TIER.FAST);
     return result;
 }
 
@@ -359,7 +359,7 @@ export async function fetchFilesAtCommit(
             sha: item.sha,
         }));
 
-    await cache.set(cacheKey, result, CACHE_TTL.WEEK); // Immutable by SHA
+    await cache.set(cacheKey, result, CACHE_TIER.IMMUTABLE); // Immutable by SHA
     return result;
 }
 
@@ -387,7 +387,7 @@ export async function fetchFileContent(
 
         if (!response.ok) return null;
         const text = await response.text();
-        await cache.set(cacheKey, text, CACHE_TTL.WEEK);
+        await cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         return text;
     } catch (error) {
         githubLogger.warn({ owner, repo, sha, path, error }, 'Failed to fetch file content');
@@ -417,7 +417,7 @@ export async function fetchCommitDiff(
 
         if (!response.ok) return null;
         const text = await response.text();
-        await cache.set(cacheKey, text, CACHE_TTL.WEEK);
+        await cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         return text;
     } catch (error) {
         githubLogger.warn({ owner, repo, sha, error }, 'Failed to fetch commit diff');
@@ -469,7 +469,7 @@ export async function fetchCommitFileDiffs(
         patch: file.patch || null,
     }));
 
-    await cache.set(cacheKey, files, CACHE_TTL.WEEK);
+    await cache.set(cacheKey, files, CACHE_TIER.IMMUTABLE);
     return files;
 }
 
@@ -531,7 +531,7 @@ export async function fetchCompareDiff(
         })),
     };
 
-    await cache.set(cacheKey, result, CACHE_TTL.WEEK);
+    await cache.set(cacheKey, result, CACHE_TIER.IMMUTABLE);
     return result;
 }
 

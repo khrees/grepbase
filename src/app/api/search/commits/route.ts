@@ -7,28 +7,17 @@ import { logger } from '@/lib/logger';
 import { RATE_LIMITS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
 import { getDb } from '@/db';
-import {
-    applyPrivateNoStoreHeaders,
-    enforceCsrfProtection,
-    enforceRateLimit,
-    resolveSession,
-} from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
-import { getClientIdFromHeaders, resolveProviderConfigFromRequest } from '../../explain/utils';
+import { applyPrivateNoStoreHeaders, guardRoute, getClientIdFromHeaders } from '@/lib/api-security';
+import { ensureRepoAccess } from '@/services/resource-access';
+import { resolveProviderConfigFromRequest } from '../../explain/utils';
 import { z } from 'zod';
-import { aiProviderConfigSchema, aiProviderTypeSchema } from '@/lib/validation';
+import { clientProviderSchema } from '@/lib/validation';
 
 const searchCommitsSchema = z.object({
     repoId: z.string().min(1),
     query: z.string().min(1).max(500),
-    provider: aiProviderConfigSchema.optional(),
-    providerType: aiProviderTypeSchema.optional(),
-    model: z.string().max(100).optional(),
-    baseUrl: z.url().optional(),
-}).refine(
-    (data) => !!(data.provider?.type || data.providerType),
-    { message: 'Either provider.type or providerType is required' }
-);
+    provider: clientProviderSchema,
+});
 
 const MAX_COMMITS = 300;
 
@@ -37,25 +26,12 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now();
 
     try {
-        const csrfError = enforceCsrfProtection(request);
-        if (csrfError) return csrfError;
-
-        const session = await resolveSession(request);
-        if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-        const rateLimitError = await enforceRateLimit(request, {
-            keyPrefix: 'api:search:commits',
-            limit: RATE_LIMITS.EXPLAIN_API,
-            sessionId: session.sessionId,
+        const guard = await guardRoute(request, {
+            rateLimit: { keyPrefix: 'api:search:commits', limit: RATE_LIMITS.EXPLAIN_API },
+            analytics: { endpoint: '/api/search/commits' },
         });
-        if (rateLimitError) {
-            const clientId = getClientIdFromHeaders(request);
-            await analytics.trackRateLimit({ endpoint: '/api/search/commits', clientId, blocked: true });
-            return rateLimitError.response;
-        }
-
-        const clientId = getClientIdFromHeaders(request);
-        await analytics.trackRateLimit({ endpoint: '/api/search/commits', clientId, blocked: false });
+        if (!guard.ok) return guard.response;
+        const { session, clientId } = guard;
 
         const rawBody = await request.json().catch(() => null);
         const parseResult = searchCommitsSchema.safeParse(rawBody);
@@ -63,25 +39,11 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Validation failed', details: parseResult.error.issues }, { status: 400 });
         }
 
-        const { repoId, query, provider, providerType, model, baseUrl } = parseResult.data;
+        const { repoId, query, provider } = parseResult.data;
 
-        try {
-            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-            if (!repoAccess) {
-                const { safeGrantRepoAccess } = await import('@/services/resource-access');
-                await safeGrantRepoAccess(repoId, session.sessionId);
-                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
-            }
-        } catch {
-            requestLogger.debug({ repoId }, 'Access control unavailable, allowing access to existing repo');
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
-        const providerConfig = await resolveProviderConfigFromRequest(request, {
-            provider,
-            providerType,
-            baseUrl,
-            model,
-        }, session.sessionId);
+        const providerConfig = await resolveProviderConfigFromRequest(request, provider, session.sessionId);
 
         const db = getDb();
         const allCommits = await db
@@ -112,18 +74,17 @@ If nothing matches, return: []`,
             maxOutputTokens: 500,
         });
 
-        // Parse the SHA array from the AI response, tolerating minor formatting noise
         let shas: string[] = [];
         try {
-            const match = text.match(/\[[\s\S]*\]/);
+            const match = text.match(/\[[\s\S]*?\]/);
             if (match) {
                 const parsed = JSON.parse(match[0]);
                 if (Array.isArray(parsed)) {
                     shas = parsed.filter((s): s is string => typeof s === 'string' && /^[0-9a-f]{7,}$/i.test(s));
                 }
             }
-        } catch {
-            requestLogger.warn({ text }, 'Failed to parse AI response as JSON');
+        } catch (err) {
+            requestLogger.warn({ text, err }, 'Failed to parse AI response as JSON');
         }
 
         const duration = Date.now() - startTime;

@@ -2,11 +2,11 @@
  * Zod validation schemas for API routes
  */
 import { z } from 'zod';
+import { COMMIT_SHA_REGEX } from '@/lib/constants';
 
 // GitHub URL validation - normalizes and validates GitHub repo URLs
 export const githubUrlSchema = z.string()
     .transform((input) => {
-        // Normalize: add https:// if missing
         let url = input.trim();
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
             url = `https://${url}`;
@@ -25,11 +25,11 @@ export const githubUrlSchema = z.string()
         { message: 'Must be a valid GitHub repository URL' }
     );
 
-// AI Provider Configuration
+// AI Provider Configuration (for internal use — includes apiKey for stored credentials)
 export const aiProviderConfigSchema = z.object({
     type: z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']),
     apiKey: z.string().optional(),
-    baseUrl: z.url().optional(),
+    baseUrl: z.string().url().optional(),
     model: z.string().max(100).optional(),
 });
 
@@ -37,60 +37,60 @@ export const aiProviderConfigSchema = z.object({
 export const aiProviderTypeSchema = z.enum(['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi']);
 export type AIProviderTypeFromSchema = z.infer<typeof aiProviderTypeSchema>;
 
-// Explain API request
-export const explainRequestSchema = z.object({
-    type: z.enum(['commit', 'project', 'question', 'day-summary', 'story']),
+// Provider schema for client-facing requests — apiKey is never accepted from the client
+export const clientProviderSchema = z.object({
+    type: aiProviderTypeSchema,
+    baseUrl: z.string().url().optional(),
+    model: z.string().max(100).optional(),
+}).strict();
+
+// Base fields shared by all explain requests
+const explainBase = z.object({
     repoId: z.string().min(1),
-    commitSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
-    startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
-    endSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
-    chapterSize: z.number().int().min(2).max(12).optional(),
-    question: z.string().max(5000).optional(),
+    provider: clientProviderSchema,
+});
+
+export const explainCommitSchema = explainBase.extend({
+    type: z.literal('commit'),
+    commitSha: z.string().regex(COMMIT_SHA_REGEX, 'Invalid commit SHA format'),
     visibleFiles: z.array(z.string().max(1024)).max(200).optional(),
-    provider: aiProviderConfigSchema.optional(),
-    // Flat params for backward compatibility
-    providerType: aiProviderTypeSchema.optional(),
+});
+
+export const explainQuestionSchema = explainBase.extend({
+    type: z.literal('question'),
+    question: z.string().max(5000),
+    commitSha: z.string().regex(COMMIT_SHA_REGEX, 'Invalid commit SHA format').optional(),
+    visibleFiles: z.array(z.string().max(1024)).max(200).optional(),
+});
+
+export const explainProjectSchema = explainBase.extend({
+    type: z.literal('project'),
+});
+
+export const explainDaySummarySchema = explainBase.extend({
+    type: z.literal('day-summary'),
     commits: z.array(z.object({
         sha: z.string(),
         message: z.string(),
         authorName: z.string().nullable(),
         date: z.string(),
-    })).max(200).optional(),
+    })).min(1).max(200),
     projectName: z.string().max(200).optional(),
     projectOwner: z.string().max(200).optional(),
-    apiKey: z.string().optional(),
-    model: z.string().max(100).optional(),
-    baseUrl: z.url().optional(),
-}).refine(
-    (data) => {
-        if (data.type === 'commit') return !!data.commitSha;
-        if (data.type === 'question') return !!data.question;
-        if (data.type === 'day-summary') return !!data.commits && data.commits.length > 0;
-        return true;
-    },
-    { message: 'Invalid request: missing required fields for type' }
-).refine(
-    (data) => {
-        // Either nested provider OR flat providerType must be provided
-        return !!(data.provider?.type || data.providerType);
-    },
-    { message: 'Either provider.type or providerType is required' }
-).refine(
-    (data) => {
-        const nestedApiKey = data.provider?.apiKey;
-        const flatApiKey = data.apiKey;
-        const hasNestedApiKey = typeof nestedApiKey === 'string' && nestedApiKey.trim().length > 0;
-        const hasFlatApiKey = typeof flatApiKey === 'string' && flatApiKey.trim().length > 0;
-        return !hasNestedApiKey && !hasFlatApiKey;
-    },
-    { message: 'Client API keys are not accepted in explain payloads. Store keys via /api/ai/credentials first.' }
-);
+});
+
+export const explainStorySchema = explainBase.extend({
+    type: z.literal('story'),
+    startSha: z.string().regex(COMMIT_SHA_REGEX, 'Invalid commit SHA format').optional(),
+    endSha: z.string().regex(COMMIT_SHA_REGEX, 'Invalid commit SHA format').optional(),
+    chapterSize: z.number().int().min(2).max(12).optional(),
+});
 
 // Repository ingest request
 export const ingestRepoSchema = z.object({
     url: githubUrlSchema,
     branch: z.string().min(1).max(255).optional(),
-    startSha: z.string().regex(/^[0-9a-f]{7,64}$/i, 'Invalid commit SHA format').optional(),
+    startSha: z.string().regex(COMMIT_SHA_REGEX, 'Invalid commit SHA format').optional(),
     clearExisting: z.boolean().optional(),
 });
 

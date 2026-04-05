@@ -31,17 +31,6 @@ export const RATE_LIMITS = {
     GENERAL_API: 60,
 } as const;
 
-// Cache TTLs (in seconds)
-export const CACHE_TTL = {
-    MINUTE: 60,
-    HOUR: 3600,
-    DAY: 86400,
-    WEEK: 604800,
-    COMMIT_EXPLANATION: 604800, // 1 week
-    PROJECT_SUMMARY: 86400, // 1 day
-    FILE_CONTENT: 3600, // 1 hour
-} as const;
-
 // Tiered Cache TTLs - different expiration based on data volatility
 export const CACHE_TIER = {
     // Volatile - changes frequently (PRs, issues, events, recent commits)
@@ -95,33 +84,3 @@ export const JOB_RETRY = {
     MAX_RETRIES: 3,
 } as const;
 
-// File extensions recognized as source code (for content fetching/display)
-export const CODE_EXTENSIONS = new Set([
-    '.js', '.jsx', '.ts', '.tsx', '.py', '.rs', '.go', '.java',
-    '.cpp', '.c', '.h', '.hpp', '.rb', '.php', '.swift', '.kt',
-    '.md', '.json', '.yaml', '.yml', '.toml', '.css', '.scss',
-    '.html', '.xml', '.sql', '.sh', '.bash',
-]);
-
-// Maximum file size for content fetching (100KB)
-export const MAX_FILE_SIZE = 100_000;
-
-export function getFileExtension(path: string): string {
-    const ext = path.split('.').pop();
-    return ext ? `.${ext.toLowerCase()}` : '';
-}
-
-export function isCodeFilePath(path: string): boolean {
-    return CODE_EXTENSIONS.has(getFileExtension(path));
-}
-
-export function shouldFetchFileContent(path: string, size: number | null | undefined): boolean {
-    return isCodeFilePath(path) && Number(size || 0) <= MAX_FILE_SIZE;
-}
-
-export function shouldFailOpen(envOverride?: string): boolean {
-    if (envOverride && envOverride !== 'false') {
-        return true;
-    }
-    return process.env.NODE_ENV !== 'production';
-}

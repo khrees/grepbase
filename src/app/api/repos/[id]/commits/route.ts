@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger';
 import { PAGINATION, RATE_LIMITS } from '@/lib/constants';
 import { getDb } from '@/db';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
+import { ensureRepoAccess } from '@/services/resource-access';
 
 /**
  * GET /api/repos/:id/commits - List commits for a repository
@@ -59,20 +59,7 @@ export async function GET(
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });
         }
 
-        // Access control: check KV-based access grant, but allow access if repo exists in DB
-        // This supports both multi-tenant (with KV) and single-user (DB-only) deployments
-        try {
-            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-            if (!repoAccess) {
-                // No access grant - try to create one, but don't block access
-                const { safeGrantRepoAccess } = await import('@/services/resource-access');
-                await safeGrantRepoAccess(repoId, session.sessionId);
-                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
-            }
-        } catch {
-            // Access control system unavailable - allow access to existing repos
-            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
         // Run count and data fetch in parallel
         const [totalResult, repoCommits] = await Promise.all([

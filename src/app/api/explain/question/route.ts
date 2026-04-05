@@ -2,81 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import { repositories, commits } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { answerQuestion } from '@/services/explain';
-import { explainRequestSchema } from '@/lib/validation';
+import { explainQuestionSchema } from '@/lib/validation';
 import { logger } from '@/lib/logger';
 import { RATE_LIMITS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
 import { getDb } from '@/db';
-import {
-    applyPrivateNoStoreHeaders,
-    enforceCsrfProtection,
-    enforceRateLimit,
-    resolveSession,
-} from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
-import { getClientIdFromHeaders, resolveAvailableFilePathsForCommit, resolveProviderConfigFromRequest } from '../utils';
+import { applyPrivateNoStoreHeaders, guardRoute, getClientIdFromHeaders } from '@/lib/api-security';
+import { ensureRepoAccess } from '@/services/resource-access';
+import { resolveAvailableFilePathsForCommit, resolveProviderConfigFromRequest } from '../utils';
 
 export async function POST(request: NextRequest) {
     const requestLogger = logger.child({ endpoint: 'POST /api/explain/question' });
     const startTime = Date.now();
 
     try {
-        const csrfError = enforceCsrfProtection(request);
-        if (csrfError) {
-            return csrfError;
-        }
-
-        const session = await resolveSession(request);
-        if (!session) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const rateLimitError = await enforceRateLimit(request, {
-            keyPrefix: 'api:explain:question',
-            limit: RATE_LIMITS.EXPLAIN_API,
-            sessionId: session.sessionId,
+        const guard = await guardRoute(request, {
+            rateLimit: { keyPrefix: 'api:explain:question', limit: RATE_LIMITS.EXPLAIN_API },
+            analytics: { endpoint: '/api/explain/question' },
         });
-        if (rateLimitError) {
-            const clientId = getClientIdFromHeaders(request);
-            requestLogger.warn({ clientId }, 'Rate limit exceeded');
-            await analytics.trackRateLimit({ endpoint: '/api/explain/question', clientId, blocked: true });
-            return rateLimitError.response;
-        }
-
-        const clientId = getClientIdFromHeaders(request);
-        await analytics.trackRateLimit({ endpoint: '/api/explain/question', clientId, blocked: false });
+        if (!guard.ok) return guard.response;
+        const { session, clientId } = guard;
 
         const db = getDb();
         const rawBody = await request.json().catch(() => null);
-        const parseResult = explainRequestSchema.safeParse(rawBody);
+        const parseResult = explainQuestionSchema.safeParse(rawBody);
 
         if (!parseResult.success) {
             return NextResponse.json({ error: 'Validation failed', details: parseResult.error.issues }, { status: 400 });
         }
 
-        const { repoId, commitSha, question, provider, providerType, model, baseUrl, visibleFiles } = parseResult.data;
+        const { repoId, commitSha, question, provider, visibleFiles } = parseResult.data;
 
-        if (parseResult.data.type !== 'question' || !question) {
-            return NextResponse.json({ error: 'Invalid request wrapper for question' }, { status: 400 });
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
-        try {
-            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-            if (!repoAccess) {
-                const { safeGrantRepoAccess } = await import('@/services/resource-access');
-                await safeGrantRepoAccess(repoId, session.sessionId);
-                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
-            }
-        } catch {
-            requestLogger.debug({ repoId }, 'Access control unavailable, allowing access to existing repo');
-        }
-
-        const providerConfig = await resolveProviderConfigFromRequest(request, {
-            provider,
-            providerType,
-            baseUrl,
-            model,
-        }, session.sessionId);
+        const providerConfig = await resolveProviderConfigFromRequest(request, provider, session.sessionId);
 
         const repo = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
         if (repo.length === 0) return NextResponse.json({ error: 'Repository not found' }, { status: 404 });

@@ -8,8 +8,9 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    padding: var(--space-md) var(--space-lg);
-    border-bottom: 1px solid var(--border-subtle);
+    height: 36px;
+    padding: 0 var(--space-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     font-weight: 600;
     flex-shrink: 0;
 }
@@ -146,7 +147,7 @@
     align-items: center;
     gap: var(--space-sm);
     padding: var(--space-md);
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
     flex-shrink: 0;
 }
 

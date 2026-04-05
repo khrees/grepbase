@@ -3,9 +3,10 @@ import { and, eq } from 'drizzle-orm';
 import { repositories, commits, files } from '@/db';
 import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
-import { RATE_LIMITS, INGEST, shouldFetchFileContent, COMMIT_SHA_REGEX } from '@/lib/constants';
+import { RATE_LIMITS, INGEST, COMMIT_SHA_REGEX } from '@/lib/constants';
+import { shouldFetchFileContent } from '@/lib/file-utils';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
+import { ensureRepoAccess } from '@/services/resource-access';
 import { fetchFilesAtCommit, getLanguageFromPath } from '@/services/github';
 
 export async function GET(
@@ -37,16 +38,7 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid commit SHA' }, { status: 400 });
         }
 
-        try {
-            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-            if (!repoAccess) {
-                const { safeGrantRepoAccess } = await import('@/services/resource-access');
-                await safeGrantRepoAccess(repoId, session.sessionId);
-                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
-            }
-        } catch {
-            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
         const [repo, commit] = await Promise.all([
             db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1),

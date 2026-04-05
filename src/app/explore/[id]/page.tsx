@@ -673,6 +673,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                     </div>
                                 ) : (
                                     <FileTree
+                                        key={currentCommitSha}
                                         files={files}
                                         selectedFile={resolvedSelectedFile}
                                         onSelectFile={selectFile}

@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
 import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
+import { ensureRepoAccess } from '@/services/resource-access';
 import { fetchCompareDiff } from '@/services/github';
 import { isSafeFilePath } from '@/lib/sanitize';
 
@@ -34,16 +34,7 @@ export async function GET(
         const { id } = await params;
         const repoId = id;
 
-        try {
-            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-            if (!repoAccess) {
-                const { safeGrantRepoAccess } = await import('@/services/resource-access');
-                await safeGrantRepoAccess(repoId, session.sessionId);
-                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
-            }
-        } catch {
-            requestLogger.debug({ repoId }, 'Access control unavailable, allowing access to existing repo');
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
         const baseSha = request.nextUrl.searchParams.get('base')?.trim() || '';
         const headSha = request.nextUrl.searchParams.get('head')?.trim() || '';

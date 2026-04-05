@@ -7,12 +7,14 @@ import {
     resolveSession,
 } from '@/lib/api-security';
 import { RATE_LIMITS } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 /**
  * GET /api/repos/branches?url=<github-url>
  * Returns the list of branches and the default branch for a public repository.
  */
 export async function GET(request: NextRequest) {
+    const requestLogger = logger.child({ endpoint: 'GET /api/repos/branches' });
     const { searchParams } = new URL(request.url);
     const rawUrl = searchParams.get('url');
 
@@ -39,7 +41,7 @@ export async function GET(request: NextRequest) {
         const result = await fetchRepoBranches(owner, repo);
         return applyPrivateNoStoreHeaders(NextResponse.json(result));
     } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to fetch branches';
-        return NextResponse.json({ error: message }, { status: 400 });
+        requestLogger.error({ error: err }, 'Failed to fetch branches');
+        return NextResponse.json({ error: 'Failed to fetch branches' }, { status: 400 });
     }
 }
