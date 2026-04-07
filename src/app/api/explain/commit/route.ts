@@ -3,79 +3,40 @@ import { repositories, commits } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { fetchCommitDiff } from '@/services/github';
 import { explainCommit } from '@/services/explain';
-import { explainRequestSchema } from '@/lib/validation';
+import { explainCommitSchema } from '@/lib/validation';
 import { logger } from '@/lib/logger';
 import { RATE_LIMITS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
 import { getDb } from '@/db';
-import {
-    applyPrivateNoStoreHeaders,
-    enforceCsrfProtection,
-    enforceRateLimit,
-    resolveSession,
-} from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
-import { getClientIdFromHeaders, resolveAvailableFilePathsForCommit, resolveProviderConfigFromRequest } from '../utils';
+import { applyPrivateNoStoreHeaders, guardRoute, getClientIdFromHeaders } from '@/lib/api-security';
+import { ensureRepoAccess } from '@/services/resource-access';
+import { resolveAvailableFilePathsForCommit, resolveProviderConfigFromRequest } from '../utils';
 
 export async function POST(request: NextRequest) {
     const requestLogger = logger.child({ endpoint: 'POST /api/explain/commit' });
     const startTime = Date.now();
-    requestLogger.debug({ method: request.method, url: request.url }, 'Request received');
 
     try {
-        const csrfError = enforceCsrfProtection(request);
-        if (csrfError) {
-            requestLogger.warn('CSRF validation failed');
-            return csrfError;
-        }
-
-        const session = await resolveSession(request);
-        if (!session) {
-            requestLogger.warn('Session not found');
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const rateLimitError = await enforceRateLimit(request, {
-            keyPrefix: 'api:explain:commit',
-            limit: RATE_LIMITS.EXPLAIN_API,
-            sessionId: session.sessionId,
+        const guard = await guardRoute(request, {
+            rateLimit: { keyPrefix: 'api:explain:commit', limit: RATE_LIMITS.EXPLAIN_API },
+            analytics: { endpoint: '/api/explain/commit' },
         });
-        if (rateLimitError) {
-            const clientId = getClientIdFromHeaders(request);
-            requestLogger.warn({ clientId }, 'Rate limit exceeded');
-            await analytics.trackRateLimit({ endpoint: '/api/explain/commit', clientId, blocked: true });
-            return rateLimitError.response;
-        }
-
-        const clientId = getClientIdFromHeaders(request);
-        await analytics.trackRateLimit({ endpoint: '/api/explain/commit', clientId, blocked: false });
+        if (!guard.ok) return guard.response;
+        const { session, clientId } = guard;
 
         const db = getDb();
         const rawBody = await request.json().catch(() => null);
-        const parseResult = explainRequestSchema.safeParse(rawBody);
+        const parseResult = explainCommitSchema.safeParse(rawBody);
 
         if (!parseResult.success) {
             return NextResponse.json({ error: 'Validation failed', details: parseResult.error.issues }, { status: 400 });
         }
 
-        const { repoId, commitSha, provider, providerType, model, baseUrl, visibleFiles } = parseResult.data;
+        const { repoId, commitSha, provider, visibleFiles } = parseResult.data;
 
-        if (parseResult.data.type !== 'commit' || !commitSha) {
-            return NextResponse.json({ error: 'Invalid request wrapper for commit' }, { status: 400 });
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Repository access denied for explain');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
-
-        const providerConfig = await resolveProviderConfigFromRequest(request, {
-            provider,
-            providerType,
-            baseUrl,
-            model,
-        }, session.sessionId);
+        const providerConfig = await resolveProviderConfigFromRequest(request, provider, session.sessionId);
 
         const repo = await db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1);
         if (repo.length === 0) return NextResponse.json({ error: 'Repository not found' }, { status: 404 });

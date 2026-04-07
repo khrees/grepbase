@@ -1,11 +1,11 @@
 import { getPlatformEnv } from '@/lib/platform/context';
 import { logger } from '@/lib/logger';
 import type { PlatformCache } from '@/lib/platform/types';
-import { GITHUB, CACHE_TTL } from '@/lib/constants';
+import { GITHUB, CACHE_TIER } from '@/lib/constants';
 
 const cacheLogger = logger.child({ service: 'cache' });
 
-export { CACHE_TTL };
+export { CACHE_TIER };
 
 export class CacheService {
     private getKv(): PlatformCache | null {

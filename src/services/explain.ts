@@ -5,7 +5,8 @@
 
 import { streamText } from 'ai';
 import { createAIProviderAsync, type AIProviderConfig } from './ai-providers';
-import { cache, CACHE_TTL } from './cache';
+import { cache } from './cache';
+import { CACHE_TIER } from '@/lib/constants';
 
 function sanitizePromptInput(text: string, maxLength: number): string {
     // Strip control characters except newlines and tabs
@@ -169,7 +170,7 @@ ${commit.diff ? `**Diff:**\n\`\`\`diff\n${commit.diff.substring(0, 7000)}${commi
         prompt: userPrompt,
         maxOutputTokens: 1400,
         onFinish: ({ text }) => {
-            cache.set(cacheKey, text, CACHE_TTL.WEEK);
+            cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         },
     });
 
@@ -222,7 +223,7 @@ ${file.content.substring(0, 8000)}${file.content.length > 8000 ? '\n// ... (trun
         prompt: userPrompt,
         maxOutputTokens: 1200,
         onFinish: ({ text }) => {
-            cache.set(cacheKey, text, CACHE_TTL.WEEK);
+            cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         },
     });
 
@@ -269,7 +270,7 @@ Please explain:
         prompt: userPrompt,
         maxOutputTokens: 1500,
         onFinish: ({ text }) => {
-            cache.set(cacheKey, text, CACHE_TTL.DAY); // Project explanation might change more often?
+            cache.set(cacheKey, text, CACHE_TIER.SLOW); // Project explanation might change more often?
         },
     });
 
@@ -337,7 +338,7 @@ Write a narrated walkthrough of this evolution.`;
         prompt: userPrompt,
         maxOutputTokens: 1800,
         onFinish: ({ text }) => {
-            cache.set(cacheKey, text, CACHE_TTL.DAY);
+            cache.set(cacheKey, text, CACHE_TIER.SLOW);
         },
     });
 
@@ -395,7 +396,7 @@ ${contextText}`;
         prompt: question,
         maxOutputTokens: 800,
         onFinish: ({ text }) => {
-            cache.set(cacheKey, text, CACHE_TTL.WEEK);
+            cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         },
     });
 

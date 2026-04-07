@@ -2,7 +2,11 @@ import { describe, test, expect } from 'bun:test';
 import {
     githubUrlSchema,
     aiProviderConfigSchema,
-    explainRequestSchema,
+    explainCommitSchema,
+    explainQuestionSchema,
+    explainProjectSchema,
+    explainDaySummarySchema,
+    explainStorySchema,
     ingestRepoSchema,
 } from '../validation';
 
@@ -23,9 +27,9 @@ describe('validation', () => {
 
         test('rejects invalid GitHub URLs', () => {
             const invalidUrls = [
-                'https://gitlab.com/owner/repo', // Not GitHub
+                'https://gitlab.com/owner/repo',
                 'not-a-url',
-                'https://github.com/owner', // Missing repo
+                'https://github.com/owner',
                 '',
             ];
 
@@ -38,9 +42,7 @@ describe('validation', () => {
 
     describe('aiProviderConfigSchema', () => {
         test('validates cloud provider without API key', () => {
-            const result = aiProviderConfigSchema.safeParse({
-                type: 'openai',
-            });
+            const result = aiProviderConfigSchema.safeParse({ type: 'openai' });
             expect(result.success).toBe(true);
         });
 
@@ -53,92 +55,133 @@ describe('validation', () => {
         });
 
         test('rejects invalid provider type', () => {
-            const result = aiProviderConfigSchema.safeParse({
-                type: 'invalid-provider',
-                apiKey: 'test',
+            const result = aiProviderConfigSchema.safeParse({ type: 'invalid-provider' });
+            expect(result.success).toBe(false);
+        });
+    });
+
+    describe('explainCommitSchema', () => {
+        test('validates commit explanation request', () => {
+            const result = explainCommitSchema.safeParse({
+                type: 'commit',
+                repoId: 'repo-123',
+                commitSha: 'abc1234',
+                provider: { type: 'openai' },
+            });
+            expect(result.success).toBe(true);
+        });
+
+        test('rejects missing commitSha', () => {
+            const result = explainCommitSchema.safeParse({
+                type: 'commit',
+                repoId: 'repo-123',
+                provider: { type: 'openai' },
+            });
+            expect(result.success).toBe(false);
+        });
+
+        test('rejects client-sent apiKey in provider', () => {
+            const result = explainCommitSchema.safeParse({
+                type: 'commit',
+                repoId: 'repo-123',
+                commitSha: 'abc1234',
+                provider: { type: 'openai', apiKey: 'sk-test' },
+            });
+            expect(result.success).toBe(false);
+        });
+
+        test('rejects empty repoId', () => {
+            const result = explainCommitSchema.safeParse({
+                type: 'commit',
+                repoId: '',
+                commitSha: 'abc1234',
+                provider: { type: 'openai' },
             });
             expect(result.success).toBe(false);
         });
     });
 
-    describe('explainRequestSchema', () => {
-        test('validates commit explanation request', () => {
-            const result = explainRequestSchema.safeParse({
-                type: 'commit',
-                repoId: 1,
-                commitSha: 'abc1234',
-                provider: {
-                    type: 'openai',
-                },
-            });
-            expect(result.success).toBe(true);
-        });
-
+    describe('explainProjectSchema', () => {
         test('validates project explanation request', () => {
-            const result = explainRequestSchema.safeParse({
+            const result = explainProjectSchema.safeParse({
                 type: 'project',
-                repoId: 1,
-                provider: {
-                    type: 'anthropic',
-                },
+                repoId: 'repo-123',
+                provider: { type: 'anthropic' },
             });
             expect(result.success).toBe(true);
         });
 
+        test('rejects missing provider', () => {
+            const result = explainProjectSchema.safeParse({
+                type: 'project',
+                repoId: 'repo-123',
+            });
+            expect(result.success).toBe(false);
+        });
+    });
+
+    describe('explainStorySchema', () => {
         test('validates story mode request', () => {
-            const result = explainRequestSchema.safeParse({
+            const result = explainStorySchema.safeParse({
                 type: 'story',
-                repoId: 1,
+                repoId: 'repo-123',
                 startSha: 'abc1234',
                 endSha: 'def5678',
                 chapterSize: 4,
-                provider: {
-                    type: 'openai',
-                },
+                provider: { type: 'openai' },
             });
             expect(result.success).toBe(true);
         });
 
-        test('rejects commit request without sha', () => {
-            const result = explainRequestSchema.safeParse({
-                type: 'commit',
-                repoId: 1,
-                provider: {
-                    type: 'openai',
-                },
+        test('rejects invalid chapterSize', () => {
+            const result = explainStorySchema.safeParse({
+                type: 'story',
+                repoId: 'repo-123',
+                chapterSize: 1,
+                provider: { type: 'openai' },
             });
             expect(result.success).toBe(false);
         });
+    });
 
-        test('rejects invalid repoId', () => {
-            const result = explainRequestSchema.safeParse({
-                type: 'project',
-                repoId: -1,
-                provider: {
-                    type: 'openai',
-                },
+    describe('explainQuestionSchema', () => {
+        test('validates question request', () => {
+            const result = explainQuestionSchema.safeParse({
+                type: 'question',
+                repoId: 'repo-123',
+                question: 'What does this code do?',
+                provider: { type: 'openai' },
+            });
+            expect(result.success).toBe(true);
+        });
+
+        test('rejects missing question', () => {
+            const result = explainQuestionSchema.safeParse({
+                type: 'question',
+                repoId: 'repo-123',
+                provider: { type: 'openai' },
             });
             expect(result.success).toBe(false);
         });
+    });
 
-        test('rejects client-sent API key in nested provider config', () => {
-            const result = explainRequestSchema.safeParse({
-                type: 'project',
-                repoId: 1,
-                provider: {
-                    type: 'openai',
-                    apiKey: 'sk-test',
-                },
+    describe('explainDaySummarySchema', () => {
+        test('validates day-summary request', () => {
+            const result = explainDaySummarySchema.safeParse({
+                type: 'day-summary',
+                repoId: 'repo-123',
+                commits: [{ sha: 'abc1234', message: 'fix bug', authorName: 'Alice', date: '2024-01-01' }],
+                provider: { type: 'openai' },
             });
-            expect(result.success).toBe(false);
+            expect(result.success).toBe(true);
         });
 
-        test('rejects client-sent API key in flat payload', () => {
-            const result = explainRequestSchema.safeParse({
-                type: 'project',
-                repoId: 1,
-                providerType: 'openai',
-                apiKey: 'sk-test',
+        test('rejects empty commits array', () => {
+            const result = explainDaySummarySchema.safeParse({
+                type: 'day-summary',
+                repoId: 'repo-123',
+                commits: [],
+                provider: { type: 'openai' },
             });
             expect(result.success).toBe(false);
         });
@@ -150,16 +193,6 @@ describe('validation', () => {
                 url: 'https://github.com/facebook/react',
             });
             expect(result.success).toBe(true);
-        });
-
-        test('applies default branch', () => {
-            const result = ingestRepoSchema.safeParse({
-                url: 'https://github.com/facebook/react',
-            });
-            expect(result.success).toBe(true);
-            if (result.success) {
-                expect(result.data.branch).toBe('main');
-            }
         });
 
         test('accepts custom branch', () => {

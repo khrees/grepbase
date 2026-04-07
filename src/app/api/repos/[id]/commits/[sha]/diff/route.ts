@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
 import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
+import { ensureRepoAccess } from '@/services/resource-access';
 import { fetchCommitFileDiffs } from '@/services/github';
 import { isSafeFilePath } from '@/lib/sanitize';
 
@@ -44,16 +44,7 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid file path' }, { status: 400 });
         }
 
-        try {
-            const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-            if (!repoAccess) {
-                const { safeGrantRepoAccess } = await import('@/services/resource-access');
-                await safeGrantRepoAccess(repoId, session.sessionId);
-                requestLogger.info({ repoId, sessionId: session.sessionId }, 'Auto-granted repository access');
-            }
-        } catch {
-            requestLogger.debug({ repoId, sessionId: session.sessionId }, 'Access control unavailable, allowing access to existing repo');
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
         const [repo, commit] = await Promise.all([
             db.select().from(repositories).where(eq(repositories.id, repoId)).limit(1),

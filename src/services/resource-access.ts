@@ -1,7 +1,8 @@
 import { getPlatformEnv } from '@/lib/platform/context';
 import { logger } from '@/lib/logger';
 import type { PlatformCache } from '@/lib/platform/types';
-import { RESOURCE_ACCESS, shouldFailOpen } from '@/lib/constants';
+import { RESOURCE_ACCESS } from '@/lib/constants';
+import { shouldFailOpen } from '@/lib/env';
 
 const accessLogger = logger.child({ service: 'resource-access' });
 
@@ -268,5 +269,30 @@ export async function safeGrantJobAccess(jobId: string, sessionId: string): Prom
         if (!shouldFailOpen(process.env.RESOURCE_ACCESS_FAIL_OPEN)) {
             throw error;
         }
+    }
+}
+
+interface AccessLogger {
+    info(obj: object, msg: string): void;
+    debug(obj: object, msg: string): void;
+}
+
+/**
+ * Ensure the session has access to a repository, auto-granting if missing.
+ * Safe to call on every request — idempotent and fails open if access control is unavailable.
+ */
+export async function ensureRepoAccess(
+    repoId: string,
+    sessionId: string,
+    log?: AccessLogger
+): Promise<void> {
+    try {
+        const hasAccess = await hasRepoAccess(repoId, sessionId);
+        if (!hasAccess) {
+            await safeGrantRepoAccess(repoId, sessionId);
+            log?.info({ repoId, sessionId }, 'Auto-granted repository access');
+        }
+    } catch {
+        log?.debug({ repoId }, 'Access control unavailable, allowing access to existing repo');
     }
 }

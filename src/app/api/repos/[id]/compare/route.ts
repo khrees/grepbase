@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { logger } from '@/lib/logger';
 import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
-import { hasRepoAccess } from '@/services/resource-access';
+import { ensureRepoAccess } from '@/services/resource-access';
 import { fetchCompareDiff } from '@/services/github';
 import { isSafeFilePath } from '@/lib/sanitize';
 
@@ -34,11 +34,7 @@ export async function GET(
         const { id } = await params;
         const repoId = id;
 
-        const repoAccess = await hasRepoAccess(repoId, session.sessionId);
-        if (!repoAccess) {
-            requestLogger.warn({ repoId, sessionId: session.sessionId }, 'Forbidden repository access');
-            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-        }
+        await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
         const baseSha = request.nextUrl.searchParams.get('base')?.trim() || '';
         const headSha = request.nextUrl.searchParams.get('head')?.trim() || '';

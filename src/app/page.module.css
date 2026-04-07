@@ -29,7 +29,7 @@
 }
 
 .eyebrow {
-    font-size: 0.68rem;
+    font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -46,7 +46,7 @@
 }
 
 .recentLabel {
-    font-size: 0.65rem;
+    font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -93,7 +93,11 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: radial-gradient(circle at 50% -20%, rgba(255, 255, 255, 0.05), transparent 70%);
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        radial-gradient(circle at 50% -20%, rgba(47, 156, 255, 0.07), transparent 70%);
+    background-size: 50px 50px, 50px 50px, 100% 100%;
     pointer-events: none;
 }
 

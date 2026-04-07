@@ -3,7 +3,7 @@
  */
 import { getPlatformEnv } from './platform/context';
 import { logger } from './logger';
-import { shouldFailOpen } from './constants';
+import { shouldFailOpen } from './env';
 import type { PlatformCache } from './platform/types';
 
 interface RateLimitResult {

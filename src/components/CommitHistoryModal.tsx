@@ -12,6 +12,7 @@ interface CommitHistoryModalProps {
     commits: Commit[];
     currentIndex: number;
     onSelectCommit: (index: number) => void;
+    initialDate?: Date | null;
 }
 
 export default function CommitHistoryModal({
@@ -19,9 +20,10 @@ export default function CommitHistoryModal({
     onClose,
     commits,
     currentIndex,
-    onSelectCommit
+    onSelectCommit,
+    initialDate = null,
 }: CommitHistoryModalProps) {
-    const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+    const [selectedDate, setSelectedDate] = useState<Date | null>(initialDate);
 
     const filteredCommits = useMemo(() => {
         if (!selectedDate) return commits;
@@ -102,7 +104,11 @@ export default function CommitHistoryModal({
                         </div>
 
                         <div className={styles.timelineScroll}>
-                            {filteredCommits.length > 0 ? (
+                            {!selectedDate ? (
+                                <div className={styles.timelineWarning}>
+                                    Select a day to see its commits.
+                                </div>
+                            ) : filteredCommits.length > 0 ? (
                                 <CommitTimeline
                                     commits={filteredCommits}
                                     currentIndex={currentIndex}

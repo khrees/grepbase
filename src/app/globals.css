@@ -1,27 +1,27 @@
 /* Grepbase Design System */
 
 :root {
-  /* Colors - Vercel Black/White/Blue */
-  --bg-primary: #000000;
-  --bg-secondary: #111111;
-  --bg-tertiary: #222222;
-  --bg-elevated: #333333;
+  /* Colors */
+  --bg-primary: #070a10;
+  --bg-secondary: #0d1117;
+  --bg-tertiary: #161b22;
+  --bg-elevated: #21262d;
 
-  --text-primary: #ffffff;
-  --text-secondary: #888888;
-  --text-muted: #666666;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
 
-  --accent-primary: #0070f3;
-  --accent-secondary: #00a4ff;
-  --accent-gradient: linear-gradient(135deg, #0070f3 0%, #00a4ff 100%);
+  --accent-primary: #2f9cff;
+  --accent-secondary: #58b8ff;
+  --accent-gradient: linear-gradient(135deg, #2f9cff 0%, #58b8ff 100%);
 
-  --success: #0070f3;
+  --success: #3fb950;
   --warning: #f5a623;
   --error: #ee0000;
 
-  --border-subtle: #333333;
-  --border-default: #444444;
-  --border-strong: #666666;
+  --border-subtle: #21262d;
+  --border-default: #30363d;
+  --border-strong: #484f58;
 
   /* Glass effect - Subtler for Vercel */
   --glass-bg: rgba(255, 255, 255, 0.05);
@@ -73,22 +73,6 @@ body {
   min-height: 100vh;
 }
 
-/* Background grid effect (Vercel style) */
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-  background-size: 50px 50px;
-  pointer-events: none;
-  z-index: -1;
-  opacity: 0.5;
-}
 
 /* Typography */
 h1,
