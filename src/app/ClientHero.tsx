@@ -215,7 +215,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
                 <div className={styles.logoWrapper}>
                     <Logo size={80} className={styles.heroLogo} />
                 </div>
-                <p className={styles.eyebrow}>AI-powered git history explorer</p>
+                <p className={styles.eyebrow}>AI git history explorer</p>
 
                 <h1 className={styles.title}>
                     Grepbase

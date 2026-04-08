@@ -14,6 +14,7 @@ interface StoryModePanelProps {
     commits: Commit[];
     currentIndex: number;
     onNavigateToCommit: (index: number) => void;
+    onOpenSettings?: () => void;
 }
 
 /** Returns the chapter index (0-based) that contains a given commit index. */
@@ -27,11 +28,53 @@ function chapterRange(chapterIndex: number, totalCommits: number): { start: numb
     return { start, end };
 }
 
+function buildTextSummary(chapterCommits: Commit[], chapterIdx: number): string {
+    const lines: string[] = [];
+
+    lines.push(`## Chapter ${chapterIdx + 1}\n`);
+
+    if (chapterCommits.length > 0) {
+        const first = chapterCommits[0];
+        const last = chapterCommits[chapterCommits.length - 1];
+        const fmtDate = (d: string) =>
+            new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const dateRange =
+            first.date !== last.date
+                ? `${fmtDate(first.date)} → ${fmtDate(last.date)}`
+                : fmtDate(first.date);
+        lines.push(`**${dateRange}** · ${chapterCommits.length} commit${chapterCommits.length !== 1 ? 's' : ''}\n`);
+    }
+
+    const authorCounts = new Map<string, number>();
+    for (const c of chapterCommits) {
+        const name = c.authorName || 'Unknown';
+        authorCounts.set(name, (authorCounts.get(name) || 0) + 1);
+    }
+    const authors = [...authorCounts.entries()].sort((a, b) => b[1] - a[1]);
+    if (authors.length > 0) {
+        const authorList = authors
+            .map(([name, count]) => (count > 1 ? `${name} (${count})` : name))
+            .join(', ');
+        lines.push(`**Contributors:** ${authorList}\n`);
+    }
+
+    lines.push('---\n');
+
+    for (const commit of chapterCommits) {
+        const firstLine = commit.message.split('\n')[0].trim();
+        const date = new Date(commit.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        lines.push(`- \`${commit.sha.slice(0, 7)}\` **${date}** — ${firstLine}`);
+    }
+
+    return lines.join('\n');
+}
+
 export default function StoryModePanel({
     repository,
     commits,
     currentIndex,
     onNavigateToCommit,
+    onOpenSettings,
 }: StoryModePanelProps) {
     const totalChapters = Math.ceil(commits.length / CHAPTER_SIZE);
 
@@ -40,7 +83,9 @@ export default function StoryModePanel({
     const [story, setStory] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    // Cache generated stories by chapter index
+    // aiGenerated tracks whether the current story content was AI-generated
+    const [aiGenerated, setAiGenerated] = useState(false);
+    // Cache AI-generated stories by chapter index only
     const cacheRef = useRef<Map<number, string>>(new Map());
     const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -52,13 +97,14 @@ export default function StoryModePanel({
         const cached = cacheRef.current.get(idx);
         if (cached) {
             setStory(cached);
+            setAiGenerated(true);
             setError(null);
             return;
         }
 
         const settings = getAISettings();
         if (!settings) {
-            setError('Configure AI settings before generating a story.');
+            onOpenSettings?.();
             return;
         }
 
@@ -108,6 +154,7 @@ export default function StoryModePanel({
             }
 
             cacheRef.current.set(idx, fullText);
+            setAiGenerated(true);
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') return;
             setError(err instanceof Error ? err.message : 'Failed to generate story.');
@@ -116,14 +163,27 @@ export default function StoryModePanel({
                 setLoading(false);
             }
         }
-    }, [commits, repository.id]);
+    }, [commits, repository.id, onOpenSettings]);
 
-    // Auto-generate when chapter changes (cleanup aborts on unmount too)
+    // Show text summary immediately when chapter changes; abort any in-flight AI generation
     useEffect(() => {
         if (commits.length === 0) return;
-        generateChapter(chapterIndex);
+        abortControllerRef.current?.abort();
+        // If we have a cached AI story for this chapter, show it
+        const cached = cacheRef.current.get(chapterIndex);
+        if (cached) {
+            setStory(cached);
+            setAiGenerated(true);
+            setError(null);
+            return;
+        }
+        // Otherwise show the instant text summary
+        const { start: s, end: e } = chapterRange(chapterIndex, commits.length);
+        setStory(buildTextSummary(commits.slice(s, e + 1), chapterIndex));
+        setAiGenerated(false);
+        setError(null);
         return () => { abortControllerRef.current?.abort(); };
-    }, [chapterIndex, commits.length, generateChapter]);
+    }, [chapterIndex, commits]);
 
     function goToPrevChapter() {
         if (chapterIndex <= 0) return;
@@ -137,6 +197,15 @@ export default function StoryModePanel({
         const next = chapterIndex + 1;
         setChapterIndex(next);
         onNavigateToCommit(chapterRange(next, commits.length).start);
+    }
+
+    function handleGenerateWithAI() {
+        generateChapter(chapterIndex);
+    }
+
+    function handleRegenerate() {
+        cacheRef.current.delete(chapterIndex);
+        generateChapter(chapterIndex);
     }
 
     const shortSha = (sha: string) => sha.slice(0, 7);
@@ -176,29 +245,35 @@ export default function StoryModePanel({
                     <ChevronRight size={14} />
                 </button>
 
-                <button
-                    className={styles.regenerate}
-                    onClick={() => {
-                        cacheRef.current.delete(chapterIndex);
-                        generateChapter(chapterIndex);
-                    }}
-                    disabled={loading}
-                    title="Regenerate this chapter"
-                >
-                    {loading
-                        ? <Loader2 size={13} className={styles.spinner} />
-                        : <Sparkles size={13} />
-                    }
-                </button>
+                {aiGenerated ? (
+                    <button
+                        className={styles.regenerate}
+                        onClick={handleRegenerate}
+                        disabled={loading}
+                        title="Regenerate this chapter"
+                    >
+                        {loading
+                            ? <Loader2 size={13} className={styles.spinner} />
+                            : <Sparkles size={13} />
+                        }
+                    </button>
+                ) : (
+                    <button
+                        className={styles.generateAiBtn}
+                        onClick={handleGenerateWithAI}
+                        disabled={loading}
+                        title="Generate AI narrative for this chapter"
+                    >
+                        {loading
+                            ? <Loader2 size={13} className={styles.spinner} />
+                            : <Sparkles size={13} />
+                        }
+                        {loading ? 'Generating...' : 'Generate with AI'}
+                    </button>
+                )}
             </div>
 
             {error && <div className={styles.error}>{error}</div>}
-
-            {!story && !loading && !error && (
-                <div className={styles.emptyState}>
-                    Configure AI settings to generate the story for this chapter.
-                </div>
-            )}
 
             {(story || loading) && (
                 <div className={styles.storyContent}>
@@ -210,6 +285,20 @@ export default function StoryModePanel({
                     )}
                     {story && (
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{story}</ReactMarkdown>
+                    )}
+                    {!aiGenerated && !loading && story && (
+                        <div className={styles.aiUpgrade}>
+                            <Sparkles size={14} />
+                            <span>
+                                Want a narrative summary?{' '}
+                                <button className={styles.settingsLink} onClick={handleGenerateWithAI}>
+                                    Generate with AI
+                                </button>
+                                {!getAISettings() && onOpenSettings && (
+                                    <> — <button className={styles.settingsLink} onClick={onOpenSettings}>configure a provider first</button></>
+                                )}
+                            </span>
+                        </div>
                     )}
                 </div>
             )}
