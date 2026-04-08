@@ -17,6 +17,7 @@ interface AIPanelProps {
     currentIndex: number;
     onOpenFile?: (path: string) => void;
     visibleFilePaths?: string[];
+    onOpenSettings?: () => void;
 }
 
 interface Message {
@@ -147,7 +148,7 @@ async function streamResponseText(response: Response, onChunk: (chunk: string) =
     }
 }
 
-export default function AIPanel({ repository, commit, onOpenFile, visibleFilePaths }: AIPanelProps) {
+export default function AIPanel({ repository, commit, onOpenFile, visibleFilePaths, onOpenSettings }: AIPanelProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -187,7 +188,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
     const explainCommit = useCallback(async () => {
         const settings = getAISettings();
         if (!settings) {
-            setError('Please configure your AI settings first (click the Settings button)');
+            setError('AI provider not configured.');
             return;
         }
 
@@ -304,7 +305,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
 
         const settings = getAISettings();
         if (!settings) {
-            setError('Please configure your AI settings first');
+            setError('AI provider not configured.');
             return;
         }
 
@@ -413,6 +414,11 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                     <div className={styles.error}>
                         <AlertCircle size={16} />
                         <span>{error}</span>
+                        {error === 'AI provider not configured.' && onOpenSettings && (
+                            <button className={styles.configureBtn} onClick={onOpenSettings}>
+                                Open Settings
+                            </button>
+                        )}
                         <button
                             className={styles.dismissBtn}
                             onClick={() => setError(null)}

@@ -11,6 +11,11 @@
       "sourceType": "github",
       "computedHash": "29adf970be592a2cc7ec07e14798cbfb50c46f7d966ca3e6bd90fc580eeba7c2"
     },
+    "copywriting": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "computedHash": "2e83eda2221e97166172a0798e9b0379e34080595e107e2fc0cf580e9b3bbf7b"
+    },
     "database-query-optimization": {
       "source": "aj-geddes/useful-ai-prompts",
       "sourceType": "github",

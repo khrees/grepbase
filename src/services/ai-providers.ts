@@ -28,10 +28,6 @@ const DEFAULT_MODELS: Record<AIProviderType, string> = {
     kimi: 'kimi-k2.5',
 };
 
-const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
-    'gemini-2.0-pro-exp-02-05': 'gemini-2.5-pro',
-};
-
 type GeminiModelEntry = {
     name?: string;
     supportedGenerationMethods?: string[];
@@ -87,9 +83,7 @@ export function resolveProviderApiKey(type: AIProviderType, explicitApiKey?: str
 }
 
 function normalizeGeminiModelName(name: string): string {
-    const trimmed = name.trim();
-    const withoutPrefix = trimmed.replace(/^models\//, '');
-    return GEMINI_LEGACY_MODEL_ALIASES[withoutPrefix] || withoutPrefix;
+    return name.trim().replace(/^models\//, '');
 }
 
 function modelSupportsGenerateContent(model: GeminiModelEntry): boolean {

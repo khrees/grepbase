@@ -236,6 +236,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         const hasProcessed = Number(job.processedCommits || 0) > 0;
         if (job.status === 'completed' || job.ready || hasProcessed) {
             refetchCommits();
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setSyncing(false);
             setResyncJobId(null);
             fireToast('Repository synced', 'success');
@@ -253,6 +254,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         const job = switchBranchJob.data;
         const resolvedId = job.repository?.id ?? job.repoId;
         if (resolvedId) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setSwitchBranchJobId(null);
             router.push(`/explore/${resolvedId}?jobId=${switchBranchJobId}`);
         } else if (job.status === 'failed') {
@@ -395,7 +397,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             sessionStorage.setItem(hintKey, '1');
             fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000);
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [commitsLoading]);
 
     // ── DOM hooks (2 legitimate effects) ─────────────────────
@@ -459,7 +460,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
             fireToast(err instanceof Error ? err.message : 'Failed to switch branch', 'error');
             setSwitchingBranch(false);
         }
-    }, [activeBranch, baseRepoUrl, repository?.defaultBranch, router, setShowBranchMenu, switchingBranch]);
+    }, [activeBranch, baseRepoUrl, repository, router, setShowBranchMenu, switchingBranch]);
 
     // ── Resync ───────────────────────────────────────────────
     const handleResync = useCallback(async () => {
@@ -894,6 +895,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                         commits={commits}
                                         currentIndex={currentIndex}
                                         onNavigateToCommit={(idx) => goToCommit(idx, commits.length)}
+                                        onOpenSettings={() => setShowSettings(true)}
                                     />
                                 )}
                             </div>
@@ -927,6 +929,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                                             currentIndex={currentIndex}
                                             onOpenFile={openFileFromAIReference}
                                             visibleFilePaths={visibleFilePaths}
+                                            onOpenSettings={() => setShowSettings(true)}
                                         />
                                     </div>
                                 ) : (

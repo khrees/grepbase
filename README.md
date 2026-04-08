@@ -1,6 +1,6 @@
 # Grepbase
 
-An AI-powered git history explorer. Paste a GitHub repository, walk every commit, and understand what changed and why — with AI.
+Paste any GitHub repo, walk every commit, and understand what changed and why — with AI.
 
 ## Features
 
