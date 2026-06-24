@@ -58,7 +58,7 @@ export const TIMEOUTS = {
 } as const;
 
 // Validation patterns
-export const COMMIT_SHA_REGEX = /^[0-9a-f]{7,64}$/i;
+export const COMMIT_SHA_REGEX = /^[0-9a-f]{7,40}$/i;
 export const MAX_FILE_PATH_LENGTH = 1024;
 
 // Ingestion settings

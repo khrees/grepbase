@@ -277,21 +277,15 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         }
     }, [chatStorageKey, commit.sha, explainCommit]);
 
-    // Persist chat by commit — render-phase check
-    const lastPersistedKeyRef = useRef<string | null>(null);
-    const lastPersistedCountRef = useRef(0);
-    if (
-        typeof window !== 'undefined' &&
-        (chatStorageKey !== lastPersistedKeyRef.current || messages.length !== lastPersistedCountRef.current)
-    ) {
-        lastPersistedKeyRef.current = chatStorageKey;
-        lastPersistedCountRef.current = messages.length;
+    // Persist chat by commit — persist to sessionStorage on changes
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
         if (messages.length === 0) {
             sessionStorage.removeItem(chatStorageKey);
         } else {
             sessionStorage.setItem(chatStorageKey, JSON.stringify(messages.slice(-30)));
         }
-    }
+    }, [chatStorageKey, messages]);
 
 
     // Scroll to bottom on new messages

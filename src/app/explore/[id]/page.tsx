@@ -189,10 +189,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         reset: resetExploreStore,
     } = useExploreStore();
 
-    // Reset UI state whenever the viewed repository changes
+    // Reset global store on mount — zustand persists across route navigations
     useEffect(() => {
         resetExploreStore();
-    }, [id, resetExploreStore]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
 
     // Local state (not shareable)
     const [historyInitialDate, setHistoryInitialDate] = useState<Date | null>(null);
@@ -207,11 +208,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     const repository = commitsQuery.data?.repository ?? null;
     const commits = useMemo(() => commitsQuery.data?.commits ?? [], [commitsQuery.data?.commits]);
 
-    // Auto-fetch remaining pages
-    const { hasNextPage, isFetchingNextPage, fetchNextPage } = commitsQuery;
-    useEffect(() => {
-        if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+    const isFetching = commitsQuery.isFetching;
 
     // ── Ingest job polling ────────────────────────────────────
     const waitingForCommits = !!ingestJobId && commits.length === 0 && !commitsQuery.isLoading;
@@ -236,7 +233,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         const hasProcessed = Number(job.processedCommits || 0) > 0;
         if (job.status === 'completed' || job.ready || hasProcessed) {
             refetchCommits();
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setSyncing(false);
             setResyncJobId(null);
             fireToast('Repository synced', 'success');
@@ -254,7 +250,6 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
         const job = switchBranchJob.data;
         const resolvedId = job.repository?.id ?? job.repoId;
         if (resolvedId) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setSwitchBranchJobId(null);
             router.push(`/explore/${resolvedId}?jobId=${switchBranchJobId}`);
         } else if (job.status === 'failed') {
@@ -400,7 +395,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
     }, [commitsLoading]);
 
     // ── DOM hooks (2 legitimate effects) ─────────────────────
-    useClickOutside(branchMenuRef, showBranchMenu, useCallback(() => setShowBranchMenu(false), [setShowBranchMenu]));
+    useClickOutside(branchMenuRef, showBranchMenu, () => setShowBranchMenu(false));
     useKeyboardNav(commits.length, goNext, goPrev, setCenterView, setShowSearchPalette, showSettings || showHistoryModal || showSearchPalette);
 
     // ── File opening from AI references ──────────────────────
@@ -550,7 +545,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
 
     return (
         <div className={styles.container}>
-            {commitsQuery.isFetchingNextPage && <div className={styles.fetchingBar} aria-hidden="true" />}
+            {isFetching && <div className={styles.fetchingBar} aria-hidden="true" />}
             <header className={styles.header}>
                 <div className={styles.headerLeft}>
                     <Link href="/" className={`btn btn-ghost ${styles.headerHomeBtn}`}>
@@ -617,7 +612,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string }
                     </button>
                     <button className={styles.chapterTrigger} onClick={() => setShowHistoryModal(true)}>
                         <span className={styles.chapterLabel}>
-                            #{currentIndex + 1} of {commitsQuery.isFetchingNextPage ? `${commits.length}+` : commits.length}
+                            #{currentIndex + 1} of {commits.length}
                         </span>
                         <span className={styles.chapterTitle}>{currentCommit?.message?.split('\n')[0] ?? ''}</span>
                         <ChevronDown size={12} className={styles.chapterChevron} />

@@ -14,6 +14,22 @@ export interface APIError {
   details?: unknown;
 }
 
+/** Extract a human-readable error message from a structured API response body. */
+function parseErrorMessage(body: Record<string, unknown>, status: number, statusText: string): string {
+  const err = body?.error;
+
+  if (typeof err === 'string' && err) return err;
+
+  if (typeof err === 'object' && err !== null) {
+    const msg = (err as Record<string, unknown>).message;
+    if (typeof msg === 'string' && msg) return msg;
+  }
+
+  if (typeof body?.message === 'string' && body.message) return body.message;
+
+  return `HTTP ${status}: ${statusText}`;
+}
+
 export class APIClient {
   private baseURL: string;
 
@@ -40,13 +56,7 @@ export class APIClient {
       const body = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,
       })) as Record<string, unknown>;
-      const err = body?.error;
-      const errorMessage =
-        (typeof err === 'string' && err) ||
-        (typeof err === 'object' && err !== null && 'message' in err && typeof (err as Record<string, unknown>).message === 'string' && (err as Record<string, unknown>).message) ||
-        (typeof body?.message === 'string' && body.message) ||
-        `HTTP ${response.status}: ${response.statusText}`;
-      throw new Error(errorMessage as string);
+      throw new Error(parseErrorMessage(body, response.status, response.statusText));
     }
 
     return response.json();
@@ -108,13 +118,7 @@ export class APIClient {
       const body = await response.json().catch(() => ({
         error: `HTTP ${response.status}: ${response.statusText}`,
       })) as Record<string, unknown>;
-      const err = body?.error;
-      const errorMessage =
-        (typeof err === 'string' && err) ||
-        (typeof err === 'object' && err !== null && 'message' in err && typeof (err as Record<string, unknown>).message === 'string' && (err as Record<string, unknown>).message) ||
-        (typeof body?.message === 'string' && body.message) ||
-        `HTTP ${response.status}: ${response.statusText}`;
-      throw new Error(errorMessage as string);
+      throw new Error(parseErrorMessage(body, response.status, response.statusText));
     }
 
     return response;

@@ -42,11 +42,6 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
     const repository = commitsQuery.data?.repository ?? null;
     const commits = useMemo(() => (commitsQuery.data?.commits ?? []) as Commit[], [commitsQuery.data?.commits]);
 
-    // Auto-fetch all pages (render-phase)
-    if (commitsQuery.hasNextPage && !commitsQuery.isFetchingNextPage) {
-        Promise.resolve().then(() => commitsQuery.fetchNextPage());
-    }
-
     const totalCommits = commits.length;
     const activeDays = useMemo(() => {
         const dateSet = new Set<string>();
@@ -239,7 +234,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string 
                     </div>
                     <span className={styles.headerBadge}>
                         <CalendarIcon size={14} />
-                        {commitsQuery.isFetchingNextPage ? 'Timeline View (loading more...)' : 'Timeline View'}
+                        {commitsQuery.isFetching ? 'Timeline View (loading more...)' : 'Timeline View'}
                     </span>
                 </div>
 
