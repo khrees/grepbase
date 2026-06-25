@@ -255,7 +255,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
 
     function viewTimeline() {
         if (repoData) {
-            router.push(`/explore/${repoData.id}/timeline`);
+            router.push(`/explore/${repoData.owner}/${repoData.name}/timeline`);
         }
     }
 
