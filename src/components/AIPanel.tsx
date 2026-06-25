@@ -156,7 +156,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
     const [streaming, setStreaming] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const visibleFilePathsRef = useRef<string[] | undefined>(visibleFilePaths);
@@ -292,6 +292,21 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
+
+    // Auto-resize textarea height to fit content
+    useEffect(() => {
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${Math.min(150, inputRef.current.scrollHeight)}px`;
+        }
+    }, [input]);
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            askQuestion(e as unknown as React.FormEvent);
+        }
+    };
 
     async function askQuestion(e: React.FormEvent) {
         e.preventDefault();
@@ -548,14 +563,15 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                 )}
 
                 <form onSubmit={askQuestion} className={styles.inputForm}>
-                    <input
+                    <textarea
                         ref={inputRef}
-                        type="text"
                         className={styles.input}
                         placeholder="Ask a question..."
                         value={input}
                         onChange={e => setInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
                         disabled={loading}
+                        rows={1}
                     />
                     {loading ? (
                         <button
