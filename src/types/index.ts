@@ -3,7 +3,7 @@
  */
 
 export interface Repository {
-    id: number;
+    id: string;
     name: string;
     owner: string;
     description: string | null;

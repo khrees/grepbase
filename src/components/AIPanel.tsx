@@ -27,7 +27,7 @@ interface Message {
 
 const CHAT_STORAGE_PREFIX = 'grepbase:ai_chat:';
 
-function getChatStorageKey(repoId: number, commitSha: string): string {
+function getChatStorageKey(repoId: string, commitSha: string): string {
     return `${CHAT_STORAGE_PREFIX}${repoId}:${commitSha}`;
 }
 

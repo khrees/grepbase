@@ -70,8 +70,10 @@ describe('auto-explorer', () => {
 
     describe('getExplorationGuidance', () => {
         test('provides path advice for topics', () => {
-            expect(getExplorationGuidance('how is auth done?')).toContain('ai-credentials.ts');
-            expect(getExplorationGuidance('where is the database schema?')).toContain('schema.ts');
+            const authGuidance = getExplorationGuidance('how is auth done?');
+            const dbGuidance = getExplorationGuidance('where is the database schema?');
+            expect(authGuidance?.includes('ai-credentials.ts')).toBe(true);
+            expect(dbGuidance?.includes('schema.ts')).toBe(true);
         });
     });
 
@@ -84,8 +86,8 @@ describe('auto-explorer', () => {
 
         test('getExplorationHintText returns markdown hints', () => {
             const hint = getExplorationHintText('how is auth done?');
-            expect(hint).not.toBeNull();
-            expect(hint).toContain('ai-credentials.ts');
+            expect(hint !== null).toBe(true);
+            expect(hint?.includes('ai-credentials.ts')).toBe(true);
         });
     });
 });
