@@ -61,6 +61,8 @@ export const explainQuestionSchema = explainBase.extend({
     question: z.string().max(5000),
     commitSha: z.string().regex(COMMIT_SHA_REGEX, 'Invalid commit SHA format').optional(),
     visibleFiles: z.array(z.string().max(1024)).max(200).optional(),
+    // Auto-explore flag - when true, the AI should explore files not in visibleFiles
+    autoExplore: z.boolean().optional(),
 });
 
 export const explainProjectSchema = explainBase.extend({
