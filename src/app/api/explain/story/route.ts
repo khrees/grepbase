@@ -9,6 +9,8 @@ import { analytics } from '@/lib/analytics';
 import { getDb } from '@/db';
 import { applyPrivateNoStoreHeaders, guardRoute, getClientIdFromHeaders } from '@/lib/api-security';
 import { ensureRepoAccess } from '@/services/resource-access';
+import { getStoredGithubToken } from '@/services/ai-credentials';
+import { fetchCommitFileDiffs } from '@/services/github';
 import { resolveProviderConfigFromRequest } from '../utils';
 
 export async function POST(request: NextRequest) {
@@ -68,13 +70,37 @@ export async function POST(request: NextRequest) {
             currentCommitIndex: endIndex,
         };
 
+        const githubToken = await getStoredGithubToken(session.sessionId);
+
+        // Fetch changed files in parallel for all selected commits
+        const commitsWithFiles = await Promise.all(
+            selectedCommits.map(async (commit) => {
+                let changedFiles: string[] = [];
+                try {
+                    const diffs = await fetchCommitFileDiffs(
+                        repo[0].owner,
+                        repo[0].name,
+                        commit.sha,
+                        githubToken ?? undefined
+                    );
+                    changedFiles = diffs.map(
+                        (f) => `${f.status === 'added' ? '+' : f.status === 'removed' ? '-' : 'M'} ${f.path} (+${f.additions} -${f.deletions})`
+                    );
+                } catch (err) {
+                    requestLogger.warn({ sha: commit.sha, err }, 'Failed to fetch changed files for commit in story');
+                }
+                return {
+                    sha: commit.sha,
+                    message: commit.message,
+                    authorName: commit.authorName,
+                    date: commit.date,
+                    changedFiles,
+                };
+            })
+        );
+
         const response = await explainStory(
-            selectedCommits.map(commit => ({
-                sha: commit.sha,
-                message: commit.message,
-                authorName: commit.authorName,
-                date: commit.date,
-            })),
+            commitsWithFiles,
             projectContext,
             providerConfig,
             chapterSize || 5
