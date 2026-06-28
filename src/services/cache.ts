@@ -1,11 +1,9 @@
 import { getPlatformEnv } from '@/lib/platform/context';
 import { logger } from '@/lib/logger';
 import type { PlatformCache } from '@/lib/platform/types';
-import { GITHUB, CACHE_TIER } from '@/lib/constants';
+import { GITHUB } from '@/lib/constants';
 
 const cacheLogger = logger.child({ service: 'cache' });
-
-export { CACHE_TIER };
 
 export class CacheService {
     private getKv(): PlatformCache | null {
@@ -74,7 +72,6 @@ export class CacheService {
         const keys = [
             `repo:${owner}:${repo}`,
             `commits:${owner}:${repo}:${GITHUB.MAX_COMMITS_PER_REPO}`,
-            `commits:${owner}:${repo}:100`, // Legacy cache key
         ];
 
         cacheLogger.info({ owner, repo, keysCount: keys.length }, 'Invalidating repository cache');

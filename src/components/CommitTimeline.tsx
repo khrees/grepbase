@@ -12,9 +12,7 @@ interface CommitTimelineProps {
     pinnedBaseSha?: string | null;
     onPinAsBase?: (sha: string) => void;
     onLoadOlder?: () => void;
-    onLoadNewer?: () => void;
     hasMoreOlder?: boolean;
-    hasMoreNewer?: boolean;
     loadingCommits?: boolean;
 }
 
@@ -25,9 +23,7 @@ export default function CommitTimeline({
     pinnedBaseSha,
     onPinAsBase,
     onLoadOlder,
-    onLoadNewer,
     hasMoreOlder,
-    hasMoreNewer,
     loadingCommits
 }: CommitTimelineProps) {
     const timelineRef = useRef<HTMLDivElement>(null);

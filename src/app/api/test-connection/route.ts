@@ -55,13 +55,8 @@ const testConnectionSchema = z
 type ModelEntry = { id?: string; name?: string };
 type GeminiModelEntry = { name?: string; supportedGenerationMethods?: string[] };
 
-const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
-    'gemini-2.0-pro-exp-02-05': 'gemini-2.5-pro',
-};
-
 function normalizeModelName(name: string): string {
-    const normalized = name.replace(/^models\//, '');
-    return GEMINI_LEGACY_MODEL_ALIASES[normalized] || normalized;
+    return name.replace(/^models\//, '');
 }
 
 function normalizeModels(models: unknown): string[] {

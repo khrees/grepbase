@@ -21,15 +21,6 @@ interface StoredSettings extends Record<AIProviderType, PersistedProviderSetting
 const STORAGE_KEY = 'ai_settings';
 const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 'lmstudio', 'glm', 'kimi'];
 
-const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
-  'gemini-2.0-pro-exp-02-05': 'gemini-2.5-pro',
-};
-
-function normalizeProviderModel(provider: AIProviderType, model: string): string {
-  if (provider !== 'gemini') return model;
-  return GEMINI_LEGACY_MODEL_ALIASES[model] || model;
-}
-
 function getDefaultSettings(): Record<AIProviderType, ProviderSettings> {
   return {
     gemini: { apiKey: '', model: 'gemini-3.1-pro' },
@@ -58,11 +49,6 @@ function mergePersistedSettings(
       apiKey: '',
     };
   }
-
-  merged.gemini = {
-    ...merged.gemini,
-    model: normalizeProviderModel('gemini', merged.gemini.model),
-  };
 
   return merged;
 }
@@ -174,17 +160,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   persist: () => {
     const { settings, activeProvider, autoExplain } = get();
-    const normalizedModel = normalizeProviderModel(activeProvider, settings[activeProvider].model);
-    const normalizedSettings: Record<AIProviderType, ProviderSettings> = {
-      ...settings,
-      [activeProvider]: {
-        ...settings[activeProvider],
-        model: normalizedModel,
-      },
-    };
-
     const data: StoredSettings = {
-      ...toPersistedSettings(normalizedSettings),
+      ...toPersistedSettings(settings),
       activeProvider,
       autoExplain,
     };
@@ -192,7 +169,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     secureStorage.setSessionItem(STORAGE_KEY, data);
     secureStorage.setSecureItem(STORAGE_KEY, data);
 
-    set({ settings: normalizedSettings });
+    set({ settings });
   },
 
   clearKeys: () => {
@@ -215,7 +192,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       config: {
         apiKey: '',
         baseUrl: config.baseUrl,
-        model: normalizeProviderModel(activeProvider, config.model),
+        model: config.model,
       },
     };
   },
@@ -234,4 +211,3 @@ export function getAutoExplainEnabled(): boolean {
 }
 
 export { PROVIDERS, STORAGE_KEY, type ProviderSettings, type PersistedProviderSettings, type StoredSettings };
-export { normalizeProviderModel, getDefaultSettings, mergePersistedSettings, toPersistedSettings, clearApiKeys };

@@ -134,7 +134,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
     const navigateWithJobData = useCallback(async (data: JobData, owner: string, repo: string) => {
         if (data.repository?.id) {
             saveRecentRepo(String(data.repository.id), owner, repo);
-            router.push(`/explore/${data.repository.id}`);
+            router.push(`/explore/${owner}/${repo}`);
             return;
         }
 
@@ -157,7 +157,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
             const resolvedRepoId = jobResponse.repository?.id ?? jobResponse.repoId ?? null;
             if (resolvedRepoId) {
                 saveRecentRepo(String(resolvedRepoId), owner, repo);
-                router.push(`/explore/${resolvedRepoId}`);
+                router.push(`/explore/${owner}/${repo}`);
             } else if (jobResponse.status === 'failed') {
                 throw new Error(jobResponse.error || 'Failed to fetch repository');
             } else if (attempts < maxAttempts) {
@@ -215,7 +215,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
                 <div className={styles.logoWrapper}>
                     <Logo size={80} className={styles.heroLogo} />
                 </div>
-                <p className={styles.eyebrow}>AI-powered git history explorer</p>
+                <p className={styles.eyebrow}>AI git history explorer</p>
 
                 <h1 className={styles.title}>
                     Grepbase
@@ -280,7 +280,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
                         <p className={styles.recentLabel}>Recent</p>
                         <div className={styles.recentGrid}>
                             {recentRepos.map(repo => (
-                                <a key={repo.id} href={`/explore/${repo.id}`} className={styles.recentCard}>
+                                <a key={repo.id} href={`/explore/${repo.owner}/${repo.name}`} className={styles.recentCard}>
                                     <BookOpen size={12} />
                                     <span>{repo.owner}/{repo.name}</span>
                                 </a>

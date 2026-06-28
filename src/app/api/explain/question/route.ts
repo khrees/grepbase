@@ -3,6 +3,7 @@ import { repositories, commits } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { answerQuestion } from '@/services/explain';
 import { explainQuestionSchema } from '@/lib/validation';
+import { detectPromptInjection } from '@/services/auto-explorer';
 import { logger } from '@/lib/logger';
 import { RATE_LIMITS } from '@/lib/constants';
 import { analytics } from '@/lib/analytics';
@@ -31,7 +32,17 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Validation failed', details: parseResult.error.issues }, { status: 400 });
         }
 
-        const { repoId, commitSha, question, provider, visibleFiles } = parseResult.data;
+        const { repoId, commitSha, question, provider, visibleFiles, autoExplore = true } = parseResult.data;
+
+        // Check for prompt injection at API level (before any expensive operations)
+        const injection = detectPromptInjection(question);
+        if (injection.isInjected) {
+            requestLogger.warn({ question }, 'Prompt injection attempt detected');
+            return NextResponse.json(
+                { error: 'Security Alert', reason: injection.reason },
+                { status: 400 }
+            );
+        }
 
         await ensureRepoAccess(repoId, session.sessionId, requestLogger);
 
@@ -44,6 +55,7 @@ export async function POST(request: NextRequest) {
         const totalCommits = Number(commitCountResult[0]?.count || 0);
 
         const projectContext = {
+            id: repoId,
             name: repo[0].name,
             description: repo[0].description,
             readme: repo[0].readme,
@@ -68,7 +80,7 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const response = await answerQuestion(question, { commit: commitContext, project: projectContext }, providerConfig);
+        const response = await answerQuestion(question, { commit: commitContext, project: projectContext, autoExplore }, providerConfig);
 
         const duration = Date.now() - startTime;
         await analytics.trackAIUsage({ provider: providerConfig.type, model: providerConfig.model, type: 'question', success: true, duration });

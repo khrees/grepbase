@@ -125,20 +125,6 @@
     transform: scale(1.05);
 }
 
-.badge {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: var(--bg-hover);
-    border: 1px solid var(--border-color);
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    margin-bottom: 2rem;
-}
-
 .title {
     font-size: 5rem;
     font-weight: 800;
@@ -249,28 +235,10 @@
     max-width: 600px;
 }
 
-.features {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 2rem;
-    color: var(--text-secondary);
-}
-
-.feature {
-    display: none;
-}
-
 .recentCard:hover {
     border-color: rgba(0, 112, 243, 0.35);
     color: var(--text-secondary);
     background: rgba(0, 112, 243, 0.06);
-}
-
-.stars {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
 }
 
 /* Responsive Layout */
