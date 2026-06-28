@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { ensureRepoAccess } from '@/services/resource-access';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import { fetchCommitFileDiffs } from '@/services/github';
 import { isSafeFilePath } from '@/lib/sanitize';
 
@@ -57,7 +58,8 @@ export async function GET(
             return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
         }
 
-        const allChangedFiles = await fetchCommitFileDiffs(repo[0].owner, repo[0].name, sha);
+        const githubToken = await getStoredGithubToken(session.sessionId);
+        const allChangedFiles = await fetchCommitFileDiffs(repo[0].owner, repo[0].name, sha, githubToken ?? undefined);
         const filteredFiles = filePath
             ? allChangedFiles.filter(file => file.path === filePath || file.previousPath === filePath)
             : allChangedFiles;

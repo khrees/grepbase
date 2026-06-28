@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { ensureRepoAccess } from '@/services/resource-access';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import { fetchFileContent, getLanguageFromPath } from '@/services/github';
 import { isSafeFilePath } from '@/lib/sanitize';
 
@@ -72,7 +73,8 @@ export async function GET(
             );
         }
 
-        const content = await fetchFileContent(repo[0].owner, repo[0].name, sha, filePath);
+        const githubToken = await getStoredGithubToken(session.sessionId);
+        const content = await fetchFileContent(repo[0].owner, repo[0].name, sha, filePath, githubToken ?? undefined);
         if (content === null) {
             return NextResponse.json({ error: 'Failed to fetch file content' }, { status: 404 });
         }

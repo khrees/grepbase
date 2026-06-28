@@ -77,18 +77,15 @@ export interface GitHubCompareDiff {
     files: GitHubCommitFileDiff[];
 }
 
-// Helper to get headers. Includes GITHUB_TOKEN if available to raise rate limits
-// from 60/hr (unauthenticated) to 5000/hr. All repos fetched here are public.
-function getGitHubHeaders(accept = 'application/vnd.github.v3+json') {
+function getGitHubHeaders(accept = 'application/vnd.github.v3+json', customToken?: string) {
     const headers: Record<string, string> = {
         'Accept': accept,
         'User-Agent': 'Grepbase',
     };
 
-    // Try process.env first (local dev / build time)
-    let token = process.env.GITHUB_TOKEN;
+    // Try custom/user token first, then process.env, then platform secrets
+    let token = customToken || process.env.GITHUB_TOKEN;
 
-    // Try platform env (runtime)
     if (!token) {
         try {
             const platform = getPlatformEnv();
@@ -143,9 +140,9 @@ function encodeGitHubPath(path: string): string {
         .join('/');
 }
 
-export async function ensureRepositoryIsPublic(owner: string, repo: string): Promise<void> {
+export async function ensureRepositoryIsPublic(owner: string, repo: string, token?: string): Promise<void> {
     const response = await fetchWithTimeout(buildRepoApiBase(owner, repo), {
-        headers: getGitHubHeaders(),
+        headers: getGitHubHeaders('application/vnd.github.v3+json', token),
     });
 
     if (!response.ok) {
@@ -161,7 +158,7 @@ export async function ensureRepositoryIsPublic(owner: string, repo: string): Pro
 /**
  * Fetch repository metadata
  */
-export async function fetchRepository(owner: string, repo: string): Promise<GitHubRepo> {
+export async function fetchRepository(owner: string, repo: string, token?: string): Promise<GitHubRepo> {
     const cacheKey = `repo:${owner}:${repo}`;
     const cached = await cache.get<GitHubRepo>(cacheKey);
     if (cached) {
@@ -172,7 +169,7 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
     githubLogger.info({ owner, repo }, 'Fetching repository from GitHub API');
 
     const response = await fetchWithTimeout(buildRepoApiBase(owner, repo), {
-        headers: getGitHubHeaders(),
+        headers: getGitHubHeaders('application/vnd.github.v3+json', token),
     });
 
     if (!response.ok) {
@@ -208,10 +205,10 @@ export async function fetchRepository(owner: string, repo: string): Promise<GitH
 /**
  * Fetch README content
  */
-export async function fetchReadme(owner: string, repo: string): Promise<string | null> {
+export async function fetchReadme(owner: string, repo: string, token?: string): Promise<string | null> {
     try {
         const response = await fetchWithTimeout(`${buildRepoApiBase(owner, repo)}/readme`, {
-            headers: getGitHubHeaders('application/vnd.github.v3.raw'),
+            headers: getGitHubHeaders('application/vnd.github.v3.raw', token),
         });
 
         if (!response.ok) {
@@ -233,7 +230,8 @@ export async function fetchCommitHistoryPage(
     repo: string,
     page: number,
     perPage: number = GITHUB.MAX_COMMITS_PER_REQUEST,
-    branch?: string
+    branch?: string,
+    token?: string
 ): Promise<GitHubCommit[]> {
     const safePage = Math.max(1, page);
     const safePerPage = Math.min(
@@ -252,7 +250,7 @@ export async function fetchCommitHistoryPage(
     }
 
     const response = await fetchWithTimeout(commitsUrl.toString(), {
-        headers: getGitHubHeaders(),
+        headers: getGitHubHeaders('application/vnd.github.v3+json', token),
     });
 
     if (!response.ok) {
@@ -278,14 +276,15 @@ export async function fetchCommitHistoryPage(
  */
 export async function fetchRepoBranches(
     owner: string,
-    repo: string
+    repo: string,
+    token?: string
 ): Promise<{ branches: string[]; defaultBranch: string }> {
     const cacheKey = `branches:${owner}:${repo}`;
     const cached = await cache.get<{ branches: string[]; defaultBranch: string }>(cacheKey);
     if (cached) return cached;
 
     const [repoDetails, branchData] = await Promise.all([
-        fetchRepository(owner, repo),
+        fetchRepository(owner, repo, token),
         (async () => {
             const allBranches: Array<{ name: string }> = [];
             let page = 1;
@@ -296,7 +295,7 @@ export async function fetchRepoBranches(
                 url.searchParams.set('per_page', '100');
                 url.searchParams.set('page', String(page));
                 
-                const response = await fetchWithTimeout(url.toString(), { headers: getGitHubHeaders() });
+                const response = await fetchWithTimeout(url.toString(), { headers: getGitHubHeaders('application/vnd.github.v3+json', token) });
                 if (!response.ok) throwGitHubError(response, 'Failed to fetch branches');
                 
                 const data = await response.json() as Array<{ name: string }>;
@@ -329,7 +328,8 @@ export async function fetchRepoBranches(
 export async function fetchFilesAtCommit(
     owner: string,
     repo: string,
-    sha: string
+    sha: string,
+    token?: string
 ): Promise<GitHubFile[]> {
     const cacheKey = `files:${owner}:${repo}:${sha}`;
     const cached = await cache.get<GitHubFile[]>(cacheKey);
@@ -339,7 +339,7 @@ export async function fetchFilesAtCommit(
     treeUrl.searchParams.set('recursive', '1');
 
     const response = await fetchWithTimeout(treeUrl.toString(), {
-        headers: getGitHubHeaders(),
+        headers: getGitHubHeaders('application/vnd.github.v3+json', token),
     });
 
     if (!response.ok) {
@@ -370,7 +370,8 @@ export async function fetchFileContent(
     owner: string,
     repo: string,
     sha: string,
-    path: string
+    path: string,
+    token?: string
 ): Promise<string | null> {
     const cacheKey = `content:${owner}:${repo}:${sha}:${path}`;
     const cached = await cache.get<string>(cacheKey);
@@ -382,7 +383,7 @@ export async function fetchFileContent(
         contentUrl.searchParams.set('ref', sha);
 
         const response = await fetchWithTimeout(contentUrl.toString(), {
-            headers: getGitHubHeaders('application/vnd.github.v3.raw'),
+            headers: getGitHubHeaders('application/vnd.github.v3.raw', token),
         });
 
         if (!response.ok) return null;
@@ -401,7 +402,8 @@ export async function fetchFileContent(
 export async function fetchCommitDiff(
     owner: string,
     repo: string,
-    sha: string
+    sha: string,
+    token?: string
 ): Promise<string | null> {
     const cacheKey = `diff:${owner}:${repo}:${sha}`;
     const cached = await cache.get<string>(cacheKey);
@@ -411,7 +413,7 @@ export async function fetchCommitDiff(
         const response = await fetchWithTimeout(
             `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
             {
-                headers: getGitHubHeaders('application/vnd.github.v3.diff'),
+                headers: getGitHubHeaders('application/vnd.github.v3.diff', token),
             }
         );
 
@@ -431,7 +433,8 @@ export async function fetchCommitDiff(
 export async function fetchCommitFileDiffs(
     owner: string,
     repo: string,
-    sha: string
+    sha: string,
+    token?: string
 ): Promise<GitHubCommitFileDiff[]> {
     const cacheKey = `commit-files-diff:${owner}:${repo}:${sha}`;
     const cached = await cache.get<GitHubCommitFileDiff[]>(cacheKey);
@@ -439,7 +442,7 @@ export async function fetchCommitFileDiffs(
 
     const response = await fetchWithTimeout(
         `${buildRepoApiBase(owner, repo)}/commits/${encodeURIComponent(sha)}`,
-        { headers: getGitHubHeaders() }
+        { headers: getGitHubHeaders('application/vnd.github.v3+json', token) }
     );
 
     if (!response.ok) {
@@ -480,7 +483,8 @@ export async function fetchCompareDiff(
     owner: string,
     repo: string,
     baseSha: string,
-    headSha: string
+    headSha: string,
+    token?: string
 ): Promise<GitHubCompareDiff> {
     const cacheKey = `compare:${owner}:${repo}:${baseSha}:${headSha}`;
     const cached = await cache.get<GitHubCompareDiff>(cacheKey);
@@ -488,7 +492,7 @@ export async function fetchCompareDiff(
 
     const response = await fetchWithTimeout(
         `${buildRepoApiBase(owner, repo)}/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(headSha)}`,
-        { headers: getGitHubHeaders() }
+        { headers: getGitHubHeaders('application/vnd.github.v3+json', token) }
     );
 
     if (!response.ok) {

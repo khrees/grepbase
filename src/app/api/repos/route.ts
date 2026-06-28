@@ -17,6 +17,7 @@ import {
     resolveSession,
     type SessionResolutionResult,
 } from '@/lib/api-security';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import {
     listRepoIdsForSession,
     safeGrantJobAccess,
@@ -235,6 +236,7 @@ export async function POST(request: NextRequest) {
             });
             await safeGrantJobAccess(jobId, session.sessionId);
 
+            const githubToken = await getStoredGithubToken(session.sessionId);
             const ingestionPromise = processRepoIngestion({
                 jobId,
                 url: repoKey,
@@ -245,6 +247,7 @@ export async function POST(request: NextRequest) {
                 branch,
                 startSha,
                 clearExisting,
+                githubToken: githubToken ?? undefined,
             }).catch((err) => {
                 logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
             });
@@ -356,6 +359,7 @@ export async function POST(request: NextRequest) {
             await safeGrantRepoAccess(newRepoResult[0].id, session.sessionId);
         }
 
+        const githubToken = await getStoredGithubToken(session.sessionId);
         const ingestionPromise = processRepoIngestion({
             jobId,
             url: repoKey,
@@ -366,6 +370,7 @@ export async function POST(request: NextRequest) {
             branch,
             startSha,
             clearExisting,
+            githubToken: githubToken ?? undefined,
         }).catch((err) => {
             logger.error({ err, jobId, owner, repo: repoName }, 'Background ingestion failed');
         });

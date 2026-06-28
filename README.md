@@ -33,7 +33,7 @@ Paste any GitHub repo, walk every commit, and understand what changed and why â€
 
 3. Create a `.env.local` file:
    ```env
-   # Required
+   # Required (For instructions, see: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
    GITHUB_TOKEN=your_github_personal_access_token
 
    # Required â€” must be stable across restarts (session credentials become unreadable if changed)
