@@ -7,9 +7,25 @@
 
 import { getHttpPlatformEnv } from './http';
 import { getRuntimeEnv } from './runtime';
+import { localKVCache } from './local';
 import type { PlatformEnv } from './types';
 
 let localPlatformEnv: PlatformEnv | null = null;
+
+function getLocalPlatformEnv(): PlatformEnv {
+  return {
+    getDatabase: () => {
+      // Lazy load DB getter to avoid circular dependency
+      const { getDb } = require('@/db');
+      return getDb();
+    },
+    getStorage: () => null,
+    getCache: () => localKVCache,
+    getAnalytics: () => null,
+    getSecret: (key: string) => process.env[key],
+    getContext: () => null,
+  };
+}
 
 /**
  * Set a custom platform environment (for testing or local development)
@@ -30,6 +46,11 @@ export function setLocalPlatformEnv(env: PlatformEnv): void {
  */
 export function getPlatformEnv(): PlatformEnv {
   if (localPlatformEnv) return localPlatformEnv;
+
+  if (typeof process !== 'undefined' && process.env.USE_LOCAL_DB === 'true') {
+    localPlatformEnv = getLocalPlatformEnv();
+    return localPlatformEnv;
+  }
 
   const runtimeEnv = getRuntimeEnv();
   if (runtimeEnv) return runtimeEnv;

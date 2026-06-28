@@ -9,6 +9,12 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+package-lock.json
+
+# agent tooling
+skills-lock.json
+.agents/
+.interface-design/
 
 # testing
 /coverage
@@ -23,6 +29,7 @@
 # misc
 .DS_Store
 *.pem
+.cache/
 
 # debug
 npm-debug.log*
@@ -42,5 +49,8 @@ next-env.d.ts
 
 
 *.db
+dev.db
+sqlite.db
 
-dev.db.
+# stale migrations
+drizzle_migrations/

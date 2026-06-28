@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { repositories, commits } from '@/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { fetchCommitDiff } from '@/services/github';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import { explainCommit } from '@/services/explain';
 import { explainCommitSchema } from '@/lib/validation';
 import { logger } from '@/lib/logger';
@@ -53,9 +54,8 @@ export async function POST(request: NextRequest) {
         };
 
         const commit = await db.select().from(commits).where(and(eq(commits.repoId, repoId), eq(commits.sha, commitSha))).limit(1);
-        if (commit.length === 0) return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
-
-        const diff = await fetchCommitDiff(repo[0].owner, repo[0].name, commitSha);
+        const githubToken = await getStoredGithubToken(session.sessionId);
+        const diff = await fetchCommitDiff(repo[0].owner, repo[0].name, commitSha, githubToken ?? undefined);
         const availableFiles = await resolveAvailableFilePathsForCommit(db, commit[0].id, visibleFiles);
 
         const commitContext = {
