@@ -166,6 +166,71 @@
     border-radius: 3px;
 }
 
+/* ── Generate with AI button ── */
+.generateAiBtn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    background: transparent;
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-sm);
+    color: var(--accent-primary);
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 500;
+    flex-shrink: 0;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+}
+
+.generateAiBtn:hover:not(:disabled) {
+    background: var(--accent-primary);
+    color: white;
+}
+
+.generateAiBtn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── AI upgrade banner ── */
+.aiUpgrade {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.5;
+}
+
+.aiUpgrade svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--accent-primary);
+}
+
+.settingsLink {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent-primary);
+    cursor: pointer;
+    font-size: inherit;
+    font-family: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.settingsLink:hover {
+    opacity: 0.8;
+}
+
 /* ── Spinner ── */
 .spinner {
     animation: spin 1s linear infinite;

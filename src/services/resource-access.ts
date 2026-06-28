@@ -80,17 +80,10 @@ function normalizeSessionRepos(blob: unknown): SessionReposBlob {
 
 function normalizeJobAccess(blob: unknown): JobAccessBlob {
     if (!blob || typeof blob !== 'object') return { version: 1, sessions: [] };
-
-    const legacySessionId = (blob as { sessionId?: unknown }).sessionId;
-    if (typeof legacySessionId === 'string' && legacySessionId.length > 0) {
-        return { version: 1, sessions: [legacySessionId] };
-    }
-
     const sessions = Array.isArray((blob as { sessions?: unknown }).sessions)
         ? (blob as { sessions: unknown[] }).sessions
             .filter((value): value is string => typeof value === 'string' && value.length > 0)
         : [];
-
     return { version: 1, sessions };
 }
 

@@ -7,7 +7,6 @@ import { fireToast } from '@/stores/toast-store';
 import {
     useSettingsStore,
     PROVIDERS,
-    normalizeProviderModel,
     type ProviderSettings,
 } from '@/stores/settings-store';
 
@@ -71,8 +70,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             persist();
             clearKeys();
 
-            const normalizedModel = normalizeProviderModel(activeProvider, settings[activeProvider].model);
-            fireToast(`Now using ${normalizedModel} model`, 'success', 3200);
+            fireToast(`Now using ${settings[activeProvider].model} model`, 'success', 3200);
             onClose();
         } catch (error) {
             setTestResult('error');
@@ -109,7 +107,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     [activeProvider]: data.models!,
                 }));
 
-                const currentModel = normalizeProviderModel(activeProvider, currentSettings.model);
+                const currentModel = currentSettings.model;
                 const nextModel = data.models.includes(currentModel)
                     ? currentModel
                     : data.models[0];
@@ -321,6 +319,3 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         </div>
     );
 }
-
-// Re-export helpers for backward compat during migration
-export { getAISettings, getAutoExplainEnabled } from '@/stores/settings-store';

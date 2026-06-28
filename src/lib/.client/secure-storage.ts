@@ -123,21 +123,11 @@ export const secureStorage = {
       const encrypted = localStorage.getItem(`${STORAGE_PREFIX}secure_${key}`);
       if (!encrypted) return null;
 
-      // Try decryption first (new format)
       try {
         const decrypted = await decrypt(encrypted);
         return JSON.parse(decrypted) as T;
       } catch {
-        // Fall back to legacy base64 format for migration
-        try {
-          const decoded = atob(encrypted);
-          const parsed = JSON.parse(decoded) as T;
-          // Re-encrypt with proper crypto
-          await secureStorage.setSecureItem(key, parsed);
-          return parsed;
-        } catch {
-          return null;
-        }
+        return null;
       }
     } catch (error) {
       console.error('Failed to retrieve secure value:', error);

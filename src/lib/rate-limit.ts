@@ -37,42 +37,31 @@ export class RateLimiter {
     ): Promise<RateLimitResult> {
         const kv = this.getKv();
         const now = Date.now();
-        const reset = now + windowSeconds * 1000;
+        const windowMs = windowSeconds * 1000;
+        const windowBucket = Math.floor(now / windowMs);
+        const windowReset = (windowBucket + 1) * windowMs;
+        const rateLimitKey = `ratelimit:${key}:${windowBucket}`;
 
         // If KV is not available, fail closed in production (deny request)
         if (!kv) {
             if (shouldFailOpen(process.env.RATE_LIMIT_FAIL_OPEN)) {
                 logger.warn({ key }, 'Rate limiting disabled: KV unavailable, failing open');
-                return { success: true, limit, remaining: limit, reset };
+                return { success: true, limit, remaining: limit, reset: windowReset };
             }
             logger.warn({ key }, 'Rate limiting unavailable: KV not configured, failing closed');
-            return { success: false, limit, remaining: 0, reset };
+            return { success: false, limit, remaining: 0, reset: windowReset };
         }
 
-        const windowMs = windowSeconds * 1000;
-        const windowBucket = Math.floor(now / windowMs);
-        const rateLimitKey = `ratelimit:${key}:${windowBucket}`;
-
         try {
-            const data = await kv.get<number | string | number[]>(rateLimitKey);
-            let currentCount = 0;
-
-            // Backward compatibility for previously stored array payloads.
-            if (typeof data === 'number' && Number.isFinite(data)) {
-                currentCount = data;
-            } else if (typeof data === 'string') {
-                const parsed = Number.parseInt(data, 10);
-                currentCount = Number.isFinite(parsed) ? parsed : 0;
-            } else if (Array.isArray(data)) {
-                currentCount = data.length;
-            }
+            const data = await kv.get<number>(rateLimitKey);
+            const currentCount = typeof data === 'number' && Number.isFinite(data) ? data : 0;
 
             if (currentCount >= limit) {
                 return {
                     success: false,
                     limit,
                     remaining: 0,
-                    reset,
+                    reset: windowReset,
                 };
             }
 
@@ -83,17 +72,17 @@ export class RateLimiter {
                 success: true,
                 limit,
                 remaining: Math.max(0, limit - nextCount),
-                reset,
+                reset: windowReset,
             };
         } catch (error) {
             logger.error({ error, key: rateLimitKey }, 'Rate limit check failed');
             // Fail closed on errors in production, fail open in dev
             if (shouldFailOpen(process.env.RATE_LIMIT_FAIL_OPEN)) {
                 logger.warn({ key: rateLimitKey }, 'Rate limit check error, failing open');
-                return { success: true, limit, remaining: limit, reset };
+                return { success: true, limit, remaining: limit, reset: windowReset };
             }
             logger.error({ key: rateLimitKey }, 'Rate limit check error, failing closed');
-            return { success: false, limit, remaining: 0, reset };
+            return { success: false, limit, remaining: 0, reset: windowReset };
         }
     }
 

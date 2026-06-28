@@ -17,6 +17,7 @@ interface AIPanelProps {
     currentIndex: number;
     onOpenFile?: (path: string) => void;
     visibleFilePaths?: string[];
+    onOpenSettings?: () => void;
 }
 
 interface Message {
@@ -26,7 +27,7 @@ interface Message {
 
 const CHAT_STORAGE_PREFIX = 'grepbase:ai_chat:';
 
-function getChatStorageKey(repoId: number, commitSha: string): string {
+function getChatStorageKey(repoId: string, commitSha: string): string {
     return `${CHAT_STORAGE_PREFIX}${repoId}:${commitSha}`;
 }
 
@@ -147,7 +148,7 @@ async function streamResponseText(response: Response, onChunk: (chunk: string) =
     }
 }
 
-export default function AIPanel({ repository, commit, onOpenFile, visibleFilePaths }: AIPanelProps) {
+export default function AIPanel({ repository, commit, onOpenFile, visibleFilePaths, onOpenSettings }: AIPanelProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -155,7 +156,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
     const [streaming, setStreaming] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
     const visibleFilePathsRef = useRef<string[] | undefined>(visibleFilePaths);
@@ -187,7 +188,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
     const explainCommit = useCallback(async () => {
         const settings = getAISettings();
         if (!settings) {
-            setError('Please configure your AI settings first (click the Settings button)');
+            setError('AI provider not configured.');
             return;
         }
 
@@ -276,21 +277,15 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         }
     }, [chatStorageKey, commit.sha, explainCommit]);
 
-    // Persist chat by commit — render-phase check
-    const lastPersistedKeyRef = useRef<string | null>(null);
-    const lastPersistedCountRef = useRef(0);
-    if (
-        typeof window !== 'undefined' &&
-        (chatStorageKey !== lastPersistedKeyRef.current || messages.length !== lastPersistedCountRef.current)
-    ) {
-        lastPersistedKeyRef.current = chatStorageKey;
-        lastPersistedCountRef.current = messages.length;
+    // Persist chat by commit — persist to sessionStorage on changes
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
         if (messages.length === 0) {
             sessionStorage.removeItem(chatStorageKey);
         } else {
             sessionStorage.setItem(chatStorageKey, JSON.stringify(messages.slice(-30)));
         }
-    }
+    }, [chatStorageKey, messages]);
 
 
     // Scroll to bottom on new messages
@@ -298,13 +293,28 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    // Auto-resize textarea height to fit content
+    useEffect(() => {
+        if (inputRef.current) {
+            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = `${Math.min(150, inputRef.current.scrollHeight)}px`;
+        }
+    }, [input]);
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            askQuestion(e as unknown as React.FormEvent);
+        }
+    };
+
     async function askQuestion(e: React.FormEvent) {
         e.preventDefault();
         if (!input.trim() || loading) return;
 
         const settings = getAISettings();
         if (!settings) {
-            setError('Please configure your AI settings first');
+            setError('AI provider not configured.');
             return;
         }
 
@@ -413,6 +423,11 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                     <div className={styles.error}>
                         <AlertCircle size={16} />
                         <span>{error}</span>
+                        {error === 'AI provider not configured.' && onOpenSettings && (
+                            <button className={styles.configureBtn} onClick={onOpenSettings}>
+                                Open Settings
+                            </button>
+                        )}
                         <button
                             className={styles.dismissBtn}
                             onClick={() => setError(null)}
@@ -548,14 +563,15 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                 )}
 
                 <form onSubmit={askQuestion} className={styles.inputForm}>
-                    <input
+                    <textarea
                         ref={inputRef}
-                        type="text"
                         className={styles.input}
                         placeholder="Ask a question..."
                         value={input}
                         onChange={e => setInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
                         disabled={loading}
+                        rows={1}
                     />
                     {loading ? (
                         <button

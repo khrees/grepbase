@@ -4,12 +4,13 @@ import { Providers } from '@/lib/providers';
 import ToastHost from '@/components/ToastHost';
 
 export const metadata: Metadata = {
-  title: 'Grepbase | AI-Powered Code Exploration',
-  description: 'Understand the evolution of any codebase with interactive timelines and AI-generated insights. The eagle-eye view of your repository.',
+  metadataBase: new URL('https://grepbase.khrees.com'),
+  title: 'Grepbase | AI Git History Explorer',
+  description: 'Explore any GitHub repository commit-by-commit with AI explanations, interactive diffs, and full code history. Understand any codebase in minutes.',
   keywords: ['code exploration', 'git timeline', 'AI code analysis', 'grepbase'],
   openGraph: {
-    title: 'Grepbase | Understand Code Through Time',
-    description: 'Transform complex git histories into interactive AI-powered walkthroughs.',
+    title: 'Grepbase — Your git history, explained',
+    description: 'Paste a GitHub repo. Walk every commit. Understand what changed and why — with AI.',
     url: 'https://grepbase.khrees.com',
     siteName: 'Grepbase',
     images: [
@@ -24,8 +25,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Grepbase | Understand Code Through Time',
-    description: 'Transform complex git histories into interactive AI-powered walkthroughs.',
+    title: 'Grepbase — Your git history, explained',
+    description: 'Paste a GitHub repo. Walk every commit. Understand what changed and why — with AI.',
     images: ['/og-image.png'],
   },
 };
