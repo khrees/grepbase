@@ -13,6 +13,8 @@ interface CommitHistoryModalProps {
     currentIndex: number;
     onSelectCommit: (index: number) => void;
     initialDate?: Date | null;
+    pinnedBaseSha?: string | null;
+    onPinAsBase?: (sha: string) => void;
 }
 
 export default function CommitHistoryModal({
@@ -22,6 +24,8 @@ export default function CommitHistoryModal({
     currentIndex,
     onSelectCommit,
     initialDate = null,
+    pinnedBaseSha,
+    onPinAsBase,
 }: CommitHistoryModalProps) {
     const [selectedDate, setSelectedDate] = useState<Date | null>(initialDate);
 
@@ -116,6 +120,8 @@ export default function CommitHistoryModal({
                                         const commit = filteredCommits[clickedIndex];
                                         handleCommitClick(commit);
                                     }}
+                                    pinnedBaseSha={pinnedBaseSha}
+                                    onPinAsBase={onPinAsBase}
                                 />
                             ) : (
                                 <div className={styles.timelineWarning}>

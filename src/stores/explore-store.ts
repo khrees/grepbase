@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { FileData } from '@/types';
 
-type CenterView = 'code' | 'diff' | 'story';
+type CenterView = 'code' | 'diff';
 type DiffScope = 'commit' | 'compare';
 
 interface ExploreState {

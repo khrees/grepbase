@@ -513,6 +513,23 @@
     color: var(--accent-primary) !important;
 }
 
+.viewStoryLink {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.viewStoryLink:hover {
+    color: var(--accent-secondary);
+    background: rgba(47, 156, 255, 0.08);
+    border-color: rgba(47, 156, 255, 0.2);
+}
+
 /* ─── Code Area ───────────────────────────────────────────────────── */
 .codeArea {
     flex: 1;
@@ -697,6 +714,52 @@
     color: var(--text-muted);
     white-space: nowrap;
     font-family: var(--font-mono);
+}
+
+.diffRangeLabel {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+
+.diffShaBadge {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--accent-primary);
+    padding: 1px 6px;
+    background: rgba(47, 156, 255, 0.08);
+    border-radius: 3px;
+    border: 1px solid rgba(47, 156, 255, 0.15);
+}
+
+.pinBadgeBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px;
+    font-size: 0.7rem;
+    font-family: inherit;
+    font-weight: 500;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.pinBadgeBtn:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.pinBadgeBtn svg {
+    flex-shrink: 0;
 }
 
 .diffFileName {

@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, GitCommit, Loader2 } from 'lucide-react';
 import styles from './CalendarTimeline.module.css';
 
@@ -126,6 +126,12 @@ export default function CalendarTimeline({
         }
         return new Date(latestMonth.year, latestMonth.month, 1);
     });
+
+    useEffect(() => {
+        if (selectedDate) {
+            setCurrentMonth(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
+        }
+    }, [selectedDate]);
 
     const resolvedMonth = useMemo(() => {
         const hasCurrentMonth = monthRange.some(
