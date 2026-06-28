@@ -270,7 +270,7 @@ Please explain:
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        maxOutputTokens: 1500,
+        maxOutputTokens: 2500,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TIER.SLOW); // Project explanation might change more often?
         },
@@ -338,7 +338,7 @@ Write a narrated walkthrough of this evolution.`;
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        maxOutputTokens: 1800,
+        maxOutputTokens: 3000,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TIER.SLOW);
         },
@@ -445,7 +445,7 @@ ${contextText}`;
         model,
         system: systemPrompt,
         prompt: question,
-        maxOutputTokens: 800,
+        maxOutputTokens: 3000,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         },
