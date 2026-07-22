@@ -33,7 +33,7 @@ function chapterRange(chapterIndex: number, totalCommits: number): { start: numb
 }
 
 function normalizeFileReference(raw: string): string | null {
-    let value = raw.trim();
+    const value = raw.trim();
     if (!value) return null;
     return value
         .replace(/^[`"'([{<]+/, '')
@@ -105,7 +105,7 @@ export default function StoryModePanel({
     currentIndex,
     onNavigateToCommit,
     onOpenFile,
-    visibleFilePaths,
+    visibleFilePaths: _visibleFilePaths,
     onOpenSettings,
 }: StoryModePanelProps) {
     const totalChapters = Math.ceil(commits.length / CHAPTER_SIZE);

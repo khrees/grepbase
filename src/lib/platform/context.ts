@@ -16,6 +16,7 @@ function getLocalPlatformEnv(): PlatformEnv {
   return {
     getDatabase: () => {
       // Lazy load DB getter to avoid circular dependency
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { getDb } = require('@/db');
       return getDb();
     },
