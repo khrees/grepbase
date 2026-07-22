@@ -16,6 +16,7 @@ interface PersistedProviderSettings {
 interface StoredSettings extends Record<AIProviderType, PersistedProviderSettings> {
   activeProvider?: AIProviderType;
   autoExplain?: boolean;
+  onlyChangedFiles?: boolean;
 }
 
 const STORAGE_KEY = 'ai_settings';
@@ -73,12 +74,14 @@ interface SettingsState {
   settings: Record<AIProviderType, ProviderSettings>;
   activeProvider: AIProviderType;
   autoExplain: boolean;
+  onlyChangedFiles: boolean;
   loaded: boolean;
 
   loadFromStorage: () => void;
   setActiveProvider: (provider: AIProviderType) => void;
   updateSetting: (provider: AIProviderType, key: keyof ProviderSettings, value: string) => void;
   setAutoExplain: (enabled: boolean) => void;
+  setOnlyChangedFiles: (enabled: boolean) => void;
   persist: () => void;
   clearKeys: () => void;
 
@@ -90,6 +93,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: getDefaultSettings(),
   activeProvider: 'gemini',
   autoExplain: false,
+  onlyChangedFiles: false,
   loaded: false,
 
   loadFromStorage: () => {
@@ -103,12 +107,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...toPersistedSettings(merged),
         activeProvider: sessionData.activeProvider,
         autoExplain: sessionData.autoExplain,
+        onlyChangedFiles: sessionData.onlyChangedFiles,
       };
 
       set({
         settings: merged,
         activeProvider: migrated.activeProvider || 'gemini',
         autoExplain: migrated.autoExplain ?? false,
+        onlyChangedFiles: migrated.onlyChangedFiles ?? false,
         loaded: true,
       });
 
@@ -129,12 +135,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...toPersistedSettings(merged),
         activeProvider: saved.activeProvider,
         autoExplain: saved.autoExplain,
+        onlyChangedFiles: saved.onlyChangedFiles,
       };
 
       set({
         settings: merged,
         activeProvider: migrated.activeProvider || 'gemini',
         autoExplain: migrated.autoExplain ?? false,
+        onlyChangedFiles: migrated.onlyChangedFiles ?? false,
         loaded: true,
       });
 
@@ -158,12 +166,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setAutoExplain: (enabled) => set({ autoExplain: enabled }),
 
+  setOnlyChangedFiles: (enabled) => set({ onlyChangedFiles: enabled }),
+
   persist: () => {
-    const { settings, activeProvider, autoExplain } = get();
+    const { settings, activeProvider, autoExplain, onlyChangedFiles } = get();
     const data: StoredSettings = {
       ...toPersistedSettings(settings),
       activeProvider,
       autoExplain,
+      onlyChangedFiles,
     };
 
     secureStorage.setSessionItem(STORAGE_KEY, data);
@@ -208,6 +219,10 @@ export function getAISettings() {
 
 export function getAutoExplainEnabled(): boolean {
   return useSettingsStore.getState().autoExplain;
+}
+
+export function getOnlyChangedFilesEnabled(): boolean {
+  return useSettingsStore.getState().onlyChangedFiles;
 }
 
 export { PROVIDERS, STORAGE_KEY, type ProviderSettings, type PersistedProviderSettings, type StoredSettings };

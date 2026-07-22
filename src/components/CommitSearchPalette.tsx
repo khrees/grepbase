@@ -273,7 +273,7 @@ export default function CommitSearchPalette({
                                         ? <Sparkles size={12} className={styles.aiIcon} />
                                         : <GitCommit size={12} className={styles.itemIcon} />
                                     }
-                                    <span className={styles.itemMessage}>
+                                    <span className={styles.itemMessage} title={commit.message.split('\n')[0]}>
                                         {commit.message.split('\n')[0]}
                                     </span>
                                     <span className={styles.itemMeta}>

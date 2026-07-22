@@ -364,6 +364,54 @@
     overflow-x: hidden;
 }
 
+.sidebarHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.sidebarTitle {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.changedFilesFilterBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    font-size: 0.68rem;
+    font-family: inherit;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.changedFilesFilterBtn:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.changedFilesFilterActive {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.12);
+    border-color: rgba(96, 165, 250, 0.3);
+}
+
+.changedFilesFilterActive:hover {
+    background: rgba(96, 165, 250, 0.2);
+    border-color: rgba(96, 165, 250, 0.45);
+}
+
 .sidebarFooter {
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     flex-shrink: 0;
@@ -762,6 +810,17 @@
     flex-shrink: 0;
 }
 
+.pinBadgeActive {
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.14);
+    border-color: rgba(96, 165, 250, 0.35);
+}
+
+.pinBadgeActive:hover {
+    background: rgba(96, 165, 250, 0.24);
+    border-color: rgba(96, 165, 250, 0.5);
+}
+
 .diffFileName {
     font-size: 0.75rem;
     color: var(--text-muted);
@@ -979,10 +1038,15 @@
     width: 1px;
     background: rgba(255, 255, 255, 0.06);
     cursor: col-resize;
-    transition: background 0.15s, width 0.15s;
+    transition: background 0.15s, width 0.15s, visibility 0.15s;
     position: relative;
     z-index: 10;
     flex-shrink: 0;
+}
+
+.resizeHandleHidden {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .resizeHandle:hover,

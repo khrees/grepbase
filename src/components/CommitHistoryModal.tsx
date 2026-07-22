@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { X, Clock, GitCommit } from 'lucide-react';
 import styles from './CommitHistoryModal.module.css';
 import CalendarTimeline from './CalendarTimeline';
@@ -28,6 +28,31 @@ export default function CommitHistoryModal({
     onPinAsBase,
 }: CommitHistoryModalProps) {
     const [selectedDate, setSelectedDate] = useState<Date | null>(initialDate);
+
+    // Auto-select date of current commit when modal opens if no initial date set
+    /* eslint-disable react-hooks/set-state-in-effect */
+    useEffect(() => {
+        if (isOpen) {
+            if (initialDate) {
+                setSelectedDate(initialDate);
+            } else if (commits[currentIndex]?.date) {
+                setSelectedDate(new Date(commits[currentIndex].date));
+            }
+        }
+    }, [isOpen, initialDate, commits, currentIndex]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    // Close on Escape key
+    useEffect(() => {
+        if (!isOpen) return;
+        function handleKeyDown(e: KeyboardEvent) {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen, onClose]);
 
     const filteredCommits = useMemo(() => {
         if (!selectedDate) return commits;

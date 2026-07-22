@@ -13,6 +13,7 @@ import {
     EyeOff,
     HelpCircle,
     Terminal,
+    Filter,
 } from 'lucide-react';
 import styles from './SettingsModal.module.css';
 import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
@@ -37,10 +38,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         settings,
         activeProvider,
         autoExplain,
+        onlyChangedFiles,
         loadFromStorage,
         setActiveProvider,
         updateSetting,
         setAutoExplain,
+        setOnlyChangedFiles,
         persist,
         clearKeys,
     } = useSettingsStore();
@@ -602,6 +605,24 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             type="checkbox"
                                             checked={autoExplain}
                                             onChange={e => setAutoExplain(e.target.checked)}
+                                        />
+                                        <span className={styles.customToggleSlider} />
+                                    </label>
+                                </div>
+
+                                <div className={styles.preferenceItem}>
+                                    <div className={styles.prefText}>
+                                        <div className={styles.prefTitle}>
+                                            <Filter size={14} className={styles.prefTitleIcon} />
+                                            <span>Only show changed files in Explore</span>
+                                        </div>
+                                        <p className={styles.prefDesc}>Restricts the sidebar file tree in Explore to display only files and folders modified, added, or created in the selected commit.</p>
+                                    </div>
+                                    <label className={styles.customToggle}>
+                                        <input
+                                            type="checkbox"
+                                            checked={onlyChangedFiles}
+                                            onChange={e => setOnlyChangedFiles(e.target.checked)}
                                         />
                                         <span className={styles.customToggleSlider} />
                                     </label>
