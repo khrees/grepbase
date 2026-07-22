@@ -518,7 +518,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
         setSyncing(true);
         try {
             const data = await api.post<{ jobId?: string; cached?: boolean }>('/api/repos', {
-                url: `github.com/${repository.owner}/${repository.name}`,
+                url: `https://github.com/${repository.owner}/${repository.name}`,
             });
             if (data.jobId) {
                 setResyncJobId(data.jobId);
