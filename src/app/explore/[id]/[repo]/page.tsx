@@ -20,7 +20,7 @@ import {
     Pin,
     PinOff,
 } from 'lucide-react';
-import { Panel, PanelGroup, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels';
+import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
 import styles from './explore.module.css';
 import SettingsModal from '@/components/SettingsModal';
 import CodeViewer from '@/components/CodeViewer';
@@ -175,7 +175,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     const searchParams = useSearchParams();
     const ingestJobId = searchParams.get('jobId');
 
-    const aiPanelRef = useRef<ImperativePanelHandle>(null);
+    const aiPanelRef = usePanelRef();
 
     // Zustand store for UI state
     const {
@@ -205,6 +205,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                 panel.collapse();
             }
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [aiPanelExpanded]);
 
     // Reset global store on mount — zustand persists across route navigations
@@ -690,9 +691,9 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
             </header>
 
             <div className={styles.main}>
-                <PanelGroup direction="horizontal" className={styles.group}>
+                <Group orientation="horizontal" className={styles.group}>
                     {!focusMode && (
-                        <Panel defaultSize={18} minSize={14} maxSize={28} className={styles.panel} id="left">
+                        <Panel defaultSize="18%" minSize="14%" maxSize="28%" className={styles.panel} id="left">
                             <div className={styles.sidebarContent}>
                                 {loadingFiles ? (
                                     <div className={styles.loadingFiles}>
@@ -710,9 +711,9 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                         </Panel>
                     )}
 
-                    {!focusMode && <PanelResizeHandle className={styles.resizeHandle} />}
+                    {!focusMode && <Separator className={styles.resizeHandle} />}
 
-                    <Panel defaultSize={60} minSize={30} className={styles.panel} id="code">
+                    <Panel defaultSize="60%" minSize="30%" className={styles.panel} id="code">
                         <div className={styles.viewTabs}>
                             <div className={styles.viewTabsLeft}>
                                 <button
@@ -939,21 +940,20 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
 
                     </Panel>
 
-                    {!focusMode && <PanelResizeHandle className={styles.resizeHandle} />}
+                    {!focusMode && <Separator className={styles.resizeHandle} />}
                     {!focusMode && (
                         <Panel
-                            ref={aiPanelRef}
+                            panelRef={aiPanelRef}
                             collapsible
-                            defaultSize={22}
-                            minSize={16}
-                            maxSize={40}
-                            onCollapse={() => {
-                                if (useExploreStore.getState().aiPanelExpanded) {
+                            defaultSize="22%"
+                            minSize="16%"
+                            maxSize="40%"
+                            onResize={(size, id, prevSize) => {
+                                if (prevSize === undefined) return; // Skip initial mount
+                                const isNowCollapsed = size.asPercentage <= 0;
+                                if (isNowCollapsed && useExploreStore.getState().aiPanelExpanded) {
                                     toggleAiPanel();
-                                }
-                            }}
-                            onExpand={() => {
-                                if (!useExploreStore.getState().aiPanelExpanded) {
+                                } else if (!isNowCollapsed && !useExploreStore.getState().aiPanelExpanded) {
                                     toggleAiPanel();
                                 }
                             }}
@@ -995,7 +995,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                             </div>
                         </Panel>
                     )}
-                </PanelGroup>
+                </Group>
             </div>
 
             {showHistoryModal && (

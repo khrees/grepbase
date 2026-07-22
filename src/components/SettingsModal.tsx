@@ -6,15 +6,13 @@ import {
     AlertCircle,
     Loader2,
     Zap,
-    Github,
+    GitBranch,
     Settings,
     Lock,
     Eye,
     EyeOff,
     HelpCircle,
     Terminal,
-    User,
-    Activity,
 } from 'lucide-react';
 import styles from './SettingsModal.module.css';
 import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
@@ -282,7 +280,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             className={`${styles.sidebarBtn} ${activeTab === 'github' ? styles.sidebarBtnActive : ''}`}
                             onClick={() => setActiveTab('github')}
                         >
-                            <Github size={16} />
+                            <GitBranch size={16} />
                             <span>GitHub Auth</span>
                             {hasStoredGithubToken && !isGithubTokenCleared && (
                                 <span className={styles.activeDot} title="Token loaded" />
@@ -458,7 +456,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 <div className={styles.formGroup}>
                                     <div className={styles.field}>
                                         <label className={styles.fieldLabel}>
-                                            <Github size={12} />
+                                            <GitBranch size={12} />
                                             <span>GitHub Personal Access Token (PAT)</span>
                                         </label>
                                         <div className={styles.passwordWrapper}>
@@ -565,6 +563,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         <span className={styles.logSuccess}>&gt; Status: 200 OK</span>
                                                         <br />
                                                         <div className={styles.inspectUserCard}>
+                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
                                                             <img src={githubVerifyStats.avatar} alt={githubVerifyStats.username} className={styles.userAvatar} />
                                                             <div>
                                                                 <span className={styles.userLogin}>@{githubVerifyStats.username}</span>
