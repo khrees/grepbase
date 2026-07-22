@@ -1,6 +1,6 @@
 
 
-import { useState, useMemo, memo } from 'react';
+import { useState, useMemo, useEffect, memo } from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, File, FileCode, FileText, FileJson, FileType, Image, Cog } from 'lucide-react';
 import styles from './FileTree.module.css';
 import type { FileData } from '@/types';
@@ -232,6 +232,36 @@ export default memo(function FileTree({ files, selectedFile, onSelectFile }: Fil
         });
         return folders;
     });
+
+    // Auto-expand parent folders when selectedFile changes
+    /* eslint-disable react-hooks/set-state-in-effect */
+    useEffect(() => {
+        if (!selectedFile) return;
+        const parts = selectedFile.path.split('/');
+        if (parts.length <= 1) return;
+        let currentPath = '';
+        const parentsToExpand: string[] = [];
+        for (let i = 0; i < parts.length - 1; i++) {
+            currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
+            parentsToExpand.push(currentPath);
+        }
+        setExpandedFolders(prev => {
+            let needsUpdate = false;
+            for (const p of parentsToExpand) {
+                if (!prev.has(p)) {
+                    needsUpdate = true;
+                    break;
+                }
+            }
+            if (!needsUpdate) return prev;
+            const next = new Set(prev);
+            for (const p of parentsToExpand) {
+                next.add(p);
+            }
+            return next;
+        });
+    }, [selectedFile]);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     const toggleFolder = (path: string) => {
         setExpandedFolders(prev => {

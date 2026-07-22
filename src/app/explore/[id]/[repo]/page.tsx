@@ -19,6 +19,7 @@ import {
     GitBranch,
     Pin,
     PinOff,
+    Filter,
 } from 'lucide-react';
 import { Group, Panel, Separator, usePanelRef } from 'react-resizable-panels';
 import styles from './explore.module.css';
@@ -40,7 +41,7 @@ import { useCommitDiff } from '@/hooks/use-commit-diff';
 import { useCompareDiff } from '@/hooks/use-compare-diff';
 import { useExploreStore } from '@/stores/explore-store';
 import { fireToast } from '@/stores/toast-store';
-import { getAISettings } from '@/stores/settings-store';
+import { getAISettings, useSettingsStore } from '@/stores/settings-store';
 import Link from 'next/link';
 import type { FileData } from '@/types';
 
@@ -82,9 +83,16 @@ function useKeyboardNav(
                 return;
             }
             if (blocked) return;
-            const tag = (e.target as HTMLElement).tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-                || (e.target as HTMLElement).isContentEditable) return;
+
+            const isEditable = (el: Element | null) => {
+                if (!el || !(el instanceof HTMLElement)) return false;
+                const tag = el.tagName;
+                return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+                    || el.isContentEditable || el.closest('[contenteditable="true"]') !== null;
+            };
+
+            if (isEditable(e.target as Element) || isEditable(document.activeElement)) return;
+
             if (e.key === 'ArrowRight') goNext(commitsLength);
             else if (e.key === 'ArrowLeft') goPrev();
             else if (e.key === 'c') setCenterView('code');
@@ -175,6 +183,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     const searchParams = useSearchParams();
     const ingestJobId = searchParams.get('jobId');
 
+    const leftPanelRef = usePanelRef();
     const aiPanelRef = usePanelRef();
 
     // Zustand store for UI state
@@ -207,6 +216,19 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [aiPanelExpanded]);
+
+    // Focus mode: collapse/expand both side panels
+    // Panels are always mounted — collapsing them avoids jarring add/remove from Group
+    useEffect(() => {
+        if (!leftPanelRef.current || !aiPanelRef.current) return;
+        if (focusMode) {
+            leftPanelRef.current.collapse();
+            aiPanelRef.current.collapse();
+        } else {
+            leftPanelRef.current.expand();
+            aiPanelRef.current.expand();
+        }
+    }, [focusMode, leftPanelRef, aiPanelRef]);
 
     // Reset global store on mount — zustand persists across route navigations
     useEffect(() => {
@@ -316,8 +338,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     });
     const branchList = branchesQuery.data?.branches ?? null;
 
+    const onlyChangedFiles = useSettingsStore(s => s.onlyChangedFiles);
+    const setOnlyChangedFiles = useSettingsStore(s => s.setOnlyChangedFiles);
+
     // ── React Query: Files ───────────────────────────────────
-    const filesQuery = useCommitFiles(id, currentCommitSha);
+    const filesQuery = useCommitFiles(id, currentCommitSha, { onlyChangedFiles });
     const files = useMemo(() => filesQuery.data ?? [], [filesQuery.data]);
 
     const visibleFilePaths = useMemo(
@@ -378,22 +403,26 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
 
     // ── Skip empty commits on initial load ───────────────────
     // If the landing commit has no files, advance until we find one that does.
-    // The ref locks after the first commit-with-files is found so manual
-    // navigation to an empty commit later doesn't auto-jump the user away.
-    const foundFilesRef = useRef(false);
+    // Uses SHA-based tracking so resyncs (new SHAs) are re-checked,
+    // but manual navigation to a previously-skipped commit is respected.
+    const checkedShasRef = useRef<Set<string>>(new Set());
     useEffect(() => {
-        if (foundFilesRef.current) return;
+        if (!currentCommitSha) return;
         if (filesQuery.isLoading || filesQuery.isError) return;
-        if (files.length > 0) {
-            foundFilesRef.current = true;
-            return;
-        }
+
+        // Already checked this SHA — never auto-advance a second time
+        if (checkedShasRef.current.has(currentCommitSha)) return;
+
+        checkedShasRef.current = new Set(checkedShasRef.current).add(currentCommitSha);
+
+        // This commit has files — done
+        if (files.length > 0) return;
+
+        // Empty commit — advance to next if available
         if (currentIndex < commits.length - 1) {
             setCurrentIndex(currentIndex + 1);
-        } else {
-            foundFilesRef.current = true; // all commits empty, give up
         }
-    }, [files, filesQuery.isLoading, filesQuery.isError, currentIndex, commits.length, setCurrentIndex]);
+    }, [files, filesQuery.isLoading, filesQuery.isError, currentIndex, commits.length, setCurrentIndex, currentCommitSha]);
 
     // ── Commit persistence ───────────────────────────────────
     const { persist: persistCommit } = useCommitPersistence(commits, id, setCurrentIndex);
@@ -403,13 +432,13 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
         persistCommit(currentCommitSha);
     }, [currentCommitSha, persistCommit]);
 
-    // ── AI settings hint (once per session after first load) ─
+    // ── AI settings hint (once ever, not per session) ─────────
     const { isLoading: commitsLoading } = commitsQuery;
     useEffect(() => {
         if (commitsLoading || typeof window === 'undefined') return;
         const hintKey = 'grepbase:ai_hint_shown';
-        if (!sessionStorage.getItem(hintKey) && !getAISettings()) {
-            sessionStorage.setItem(hintKey, '1');
+        if (!localStorage.getItem(hintKey) && !getAISettings()) {
+            localStorage.setItem(hintKey, '1');
             fireToast('Set up an AI provider in Settings to unlock explanations', 'info', 6000);
         }
     }, [commitsLoading]);
@@ -462,10 +491,16 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
 
             const targetId = data.repository?.id;
             if (targetId) {
-                router.push(data.jobId
-                    ? `/explore/${targetId}?jobId=${data.jobId}`
-                    : `/explore/${targetId}`
-                );
+                if (data.jobId) {
+                    setSwitchBranchJobId(data.jobId);
+                } else if (targetId === id) {
+                    // Same repo, same branch record — refetch in place
+                    await refetchCommits();
+                    setSwitchingBranch(false);
+                    fireToast(`Switched to ${branch}`, 'success');
+                } else {
+                    router.push(`/explore/${targetId}`);
+                }
             } else if (data.jobId) {
                 setSwitchBranchJobId(data.jobId);
             } else {
@@ -475,7 +510,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
             fireToast(err instanceof Error ? err.message : 'Failed to switch branch', 'error');
             setSwitchingBranch(false);
         }
-    }, [activeBranch, baseRepoUrl, repository, router, setShowBranchMenu, switchingBranch]);
+    }, [activeBranch, baseRepoUrl, id, repository, router, refetchCommits, setShowBranchMenu, switchingBranch]);
 
     // ── Resync ───────────────────────────────────────────────
     const handleResync = useCallback(async () => {
@@ -646,7 +681,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                         <span className={styles.chapterLabel}>
                             #{currentIndex + 1} of {commits.length}
                         </span>
-                        <span className={styles.chapterTitle}>{currentCommit?.message?.split('\n')[0] ?? ''}</span>
+                        <span className={styles.chapterTitle} title={currentCommit?.message?.split('\n')[0] ?? ''}>{currentCommit?.message?.split('\n')[0] ?? ''}</span>
                         <ChevronDown size={12} className={styles.chapterChevron} />
                     </button>
                     <button
@@ -692,26 +727,40 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
 
             <div className={styles.main}>
                 <Group orientation="horizontal" className={styles.group}>
-                    {!focusMode && (
-                        <Panel defaultSize="18%" minSize="14%" maxSize="28%" className={styles.panel} id="left">
-                            <div className={styles.sidebarContent}>
-                                {loadingFiles ? (
-                                    <div className={styles.loadingFiles}>
-                                        <Loader2 size={24} className={styles.spinner} />
-                                    </div>
-                                ) : (
-                                    <FileTree
-                                        key={currentCommitSha}
-                                        files={files}
-                                        selectedFile={resolvedSelectedFile}
-                                        onSelectFile={selectFile}
-                                    />
-                                )}
-                            </div>
-                        </Panel>
-                    )}
+                    <Panel
+                        defaultSize="18%" minSize="14%" maxSize="28%"
+                        collapsible collapsedSize={0}
+                        panelRef={leftPanelRef}
+                        className={styles.panel} id="left"
+                    >
+                        <div className={styles.sidebarHeader}>
+                            <span className={styles.sidebarTitle}>Files</span>
+                            <button
+                                type="button"
+                                className={`${styles.changedFilesFilterBtn} ${onlyChangedFiles ? styles.changedFilesFilterActive : ''}`}
+                                onClick={() => setOnlyChangedFiles(!onlyChangedFiles)}
+                                title={onlyChangedFiles ? 'Showing only changed files in this commit. Click to show all repository files.' : 'Showing all repository files. Click to show only changed files in this commit.'}
+                            >
+                                <Filter size={11} />
+                                <span>{onlyChangedFiles ? 'Changed only' : 'All files'}</span>
+                            </button>
+                        </div>
+                        <div className={styles.sidebarContent}>
+                            {loadingFiles ? (
+                                <div className={styles.loadingFiles}>
+                                    <Loader2 size={24} className={styles.spinner} />
+                                </div>
+                            ) : (
+                                <FileTree
+                                    files={files}
+                                    selectedFile={resolvedSelectedFile}
+                                    onSelectFile={selectFile}
+                                />
+                            )}
+                        </div>
+                    </Panel>
 
-                    {!focusMode && <Separator className={styles.resizeHandle} />}
+                    <Separator className={`${styles.resizeHandle} ${focusMode ? styles.resizeHandleHidden : ''}`} />
 
                     <Panel defaultSize="60%" minSize="30%" className={styles.panel} id="code">
                         <div className={styles.viewTabs}>
@@ -811,6 +860,16 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                                                             ? resolvedSelectedFile.path.split('/').pop()
                                                             : 'No file selected'}
                                                     </span>
+                                                    {pinnedBaseSha && (
+                                                        <button
+                                                            className={`${styles.pinBadgeBtn} ${styles.pinBadgeActive}`}
+                                                            onClick={() => setPinnedBaseSha(null)}
+                                                            title="Base commit is pinned for Compare mode — click to unpin"
+                                                        >
+                                                            <PinOff size={11} />
+                                                            <span>Base pinned ({pinnedBaseSha.slice(0, 7)})</span>
+                                                        </button>
+                                                    )}
                                                 </div>
                                             ) : (
                                                 <div className={styles.diffToolbarControls}>
@@ -820,12 +879,12 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                                                     </code>
                                                     {pinnedBaseSha ? (
                                                         <button
-                                                            className={styles.pinBadgeBtn}
+                                                            className={`${styles.pinBadgeBtn} ${styles.pinBadgeActive}`}
                                                             onClick={() => setPinnedBaseSha(null)}
                                                             title="Unpin base commit — will fall back to previous commit"
                                                         >
                                                             <PinOff size={11} />
-                                                            <span>Unpin</span>
+                                                            <span>Pinned ({pinnedBaseSha.slice(0, 7)})</span>
                                                         </button>
                                                     ) : (
                                                         <button
@@ -940,61 +999,59 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
 
                     </Panel>
 
-                    {!focusMode && <Separator className={styles.resizeHandle} />}
-                    {!focusMode && (
-                        <Panel
-                            panelRef={aiPanelRef}
-                            collapsible
-                            defaultSize="22%"
-                            minSize="16%"
-                            maxSize="40%"
-                            onResize={(size, id, prevSize) => {
-                                if (prevSize === undefined) return; // Skip initial mount
-                                const isNowCollapsed = size.asPercentage <= 0;
-                                if (isNowCollapsed && useExploreStore.getState().aiPanelExpanded) {
-                                    toggleAiPanel();
-                                } else if (!isNowCollapsed && !useExploreStore.getState().aiPanelExpanded) {
-                                    toggleAiPanel();
-                                }
-                            }}
-                            className={styles.panel}
-                            id="ai"
-                        >
-                            <div className={`${styles.aiPanelInner} ${!aiPanelExpanded ? styles.aiPanelCollapsed : ''}`}>
-                                <button
-                                    className={styles.aiCollapseBtn}
-                                    onClick={() => {
-                                        const panel = aiPanelRef.current;
-                                        if (panel) {
-                                            if (panel.isCollapsed()) {
-                                                panel.expand();
-                                            } else {
-                                                panel.collapse();
-                                            }
+                    <Separator className={`${styles.resizeHandle} ${focusMode ? styles.resizeHandleHidden : ''}`} />
+                    <Panel
+                        panelRef={aiPanelRef}
+                        collapsible collapsedSize={0}
+                        defaultSize="22%"
+                        minSize="16%"
+                        maxSize="40%"
+                        onResize={(size, id, prevSize) => {
+                            if (prevSize === undefined) return; // Skip initial mount
+                            const isNowCollapsed = size.asPercentage <= 0;
+                            if (isNowCollapsed && useExploreStore.getState().aiPanelExpanded) {
+                                toggleAiPanel();
+                            } else if (!isNowCollapsed && !useExploreStore.getState().aiPanelExpanded) {
+                                toggleAiPanel();
+                            }
+                        }}
+                        className={styles.panel}
+                        id="ai"
+                    >
+                        <div className={`${styles.aiPanelInner} ${!aiPanelExpanded ? styles.aiPanelCollapsed : ''}`}>
+                            <button
+                                className={styles.aiCollapseBtn}
+                                onClick={() => {
+                                    const panel = aiPanelRef.current;
+                                    if (panel) {
+                                        if (panel.isCollapsed()) {
+                                            panel.expand();
+                                        } else {
+                                            panel.collapse();
                                         }
-                                    }}
-                                    title={aiPanelExpanded ? 'Collapse AI' : 'Expand AI'}
-                                >
-                                    {aiPanelExpanded ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
-                                </button>
-                                {aiPanelExpanded ? (
-                                    <div className={styles.aiPanelWrapper}>
-                                        <AIPanel
-                                            repository={repository}
-                                            commit={currentCommit}
-                                            totalCommits={commits.length}
-                                            currentIndex={currentIndex}
-                                            onOpenFile={openFileFromAIReference}
-                                            visibleFilePaths={visibleFilePaths}
-                                            onOpenSettings={() => setShowSettings(true)}
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className={styles.aiCollapsedLabel}>AI</div>
-                                )}
-                            </div>
-                        </Panel>
-                    )}
+                                    }
+                                }}
+                                title={aiPanelExpanded ? 'Collapse AI' : 'Expand AI'}
+                            >
+                                {aiPanelExpanded ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
+                            </button>
+                            {aiPanelExpanded ? (
+                                <div className={styles.aiPanelWrapper}>
+                                    <AIPanel
+                                        repository={repository}
+                                        commit={currentCommit}
+                                        totalCommits={commits.length}
+                                        currentIndex={currentIndex}
+                                        onOpenFile={openFileFromAIReference}
+                                        visibleFilePaths={visibleFilePaths}
+                                        onOpenSettings={() => setShowSettings(true)}
+                                    />
+                                </div>
+                            ) : (
+                                <div className={styles.aiCollapsedLabel}>AI</div>
+                            )}
+                        </div>
+                    </Panel>
                 </Group>
             </div>
 
