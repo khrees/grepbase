@@ -231,8 +231,8 @@
 }
 
 .inlineCommitLink code {
-    background: rgba(47, 156, 255, 0.08) !important;
-    border: 1px solid rgba(47, 156, 255, 0.2) !important;
+    background: rgba(0, 112, 243, 0.08) !important;
+    border: 1px solid rgba(0, 112, 243, 0.2) !important;
     color: var(--accent-primary) !important;
     padding: 1px 6px !important;
     border-radius: 4px !important;
@@ -241,10 +241,10 @@
 }
 
 .inlineCommitLink:hover code {
-    background: rgba(47, 156, 255, 0.15) !important;
+    background: rgba(0, 112, 243, 0.15) !important;
     border-color: var(--accent-primary) !important;
     color: var(--accent-secondary) !important;
-    box-shadow: 0 2px 6px rgba(47, 156, 255, 0.2) !important;
+    box-shadow: 0 2px 6px rgba(0, 112, 243, 0.2) !important;
 }
 
 .inlineFileLink code {
@@ -295,7 +295,7 @@
 .generateAiBtn:hover:not(:disabled) {
     background: var(--accent-primary);
     color: white;
-    box-shadow: 0 0 10px rgba(47, 156, 255, 0.25);
+    box-shadow: 0 0 10px rgba(0, 112, 243, 0.25);
 }
 
 .generateAiBtn:disabled {
@@ -311,8 +311,8 @@
     margin-top: var(--space-lg);
     padding: var(--space-md);
     border-radius: var(--radius-md);
-    background: rgba(47, 156, 255, 0.04);
-    border: 1px solid rgba(47, 156, 255, 0.15);
+    background: rgba(0, 112, 243, 0.04);
+    border: 1px solid rgba(0, 112, 243, 0.15);
     color: var(--text-secondary);
     font-size: 0.8rem;
     line-height: 1.5;

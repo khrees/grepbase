@@ -17,6 +17,8 @@ describe('validation', () => {
                 'https://github.com/owner/repo',
                 'https://github.com/facebook/react',
                 'https://github.com/vercel/next.js',
+                'github.com/facebook/react',
+                'facebook/react',
             ];
 
             for (const url of validUrls) {

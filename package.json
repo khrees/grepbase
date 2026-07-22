@@ -26,6 +26,7 @@
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "framer-motion": "^12.42.2",
+    "geist": "^1.7.2",
     "lucide-react": "^1.25.0",
     "mermaid": "^11.16.0",
     "nanoid": "^6.0.0",

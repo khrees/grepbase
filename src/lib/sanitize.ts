@@ -7,7 +7,17 @@
  */
 export function sanitizeGitHubUrl(url: string): string {
     try {
-        const parsed = new URL(url);
+        let cleaned = url.trim();
+
+        if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+            if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(cleaned)) {
+                cleaned = `https://github.com/${cleaned}`;
+            } else {
+                cleaned = `https://${cleaned}`;
+            }
+        }
+
+        const parsed = new URL(cleaned);
 
         // Only allow github.com
         if (parsed.hostname !== 'github.com') {
@@ -24,13 +34,26 @@ export function sanitizeGitHubUrl(url: string): string {
         if (parts.length < 2) {
             throw new Error('Invalid GitHub repository URL');
         }
-        parsed.pathname = `/${parts[0]}/${parts[1].replace(/\.git$/, '')}`;
+
+        const owner = parts[0];
+        const repo = parts[1].replace(/\.git$/, '');
+
+        // Validate owner and repo names
+        const validNameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
+        if (!validNameRegex.test(owner) || !validNameRegex.test(repo)) {
+            throw new Error('Invalid GitHub repository URL');
+        }
+
+        parsed.pathname = `/${owner}/${repo}`;
         parsed.search = '';
         parsed.hash = '';
 
         return parsed.toString();
     } catch (e) {
-        if (e instanceof Error && e.message !== 'Invalid GitHub URL') {
+        if (e instanceof Error && (
+            e.message === 'Only GitHub URLs are allowed' ||
+            e.message === 'Invalid GitHub repository URL'
+        )) {
             throw e;
         }
         throw new Error('Invalid GitHub URL');

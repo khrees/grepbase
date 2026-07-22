@@ -21,7 +21,7 @@
 
 .header svg {
     color: var(--accent-primary);
-    filter: drop-shadow(0 0 6px rgba(47, 156, 255, 0.5));
+    filter: drop-shadow(0 0 6px rgba(0, 112, 243, 0.5));
 }
 
 .content {
@@ -51,12 +51,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(47, 156, 255, 0.1);
-    border: 1px solid rgba(47, 156, 255, 0.2);
+    background: rgba(0, 112, 243, 0.1);
+    border: 1px solid rgba(0, 112, 243, 0.2);
     border-radius: 50%;
     margin-bottom: var(--space-lg);
     color: var(--accent-primary);
-    box-shadow: 0 0 20px rgba(47, 156, 255, 0.15);
+    box-shadow: 0 0 20px rgba(0, 112, 243, 0.15);
 }
 
 .emptyState h3 {
@@ -147,7 +147,7 @@
     color: #ffffff;
     border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
     max-width: 85%;
-    box-shadow: 0 4px 15px rgba(47, 156, 255, 0.15);
+    box-shadow: 0 4px 15px rgba(0, 112, 243, 0.15);
     border: none;
 }
 
@@ -266,7 +266,7 @@
 .input:focus {
     outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 2px rgba(47, 156, 255, 0.2);
+    box-shadow: 0 0 0 2px rgba(0, 112, 243, 0.2);
     background: var(--bg-secondary);
 }
 

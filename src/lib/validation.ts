@@ -9,7 +9,11 @@ export const githubUrlSchema = z.string()
     .transform((input) => {
         let url = input.trim();
         if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = `https://${url}`;
+            if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(url)) {
+                url = `https://github.com/${url}`;
+            } else {
+                url = `https://${url}`;
+            }
         }
         return url;
     })
@@ -17,7 +21,14 @@ export const githubUrlSchema = z.string()
         (url) => {
             try {
                 const parsed = new URL(url);
-                return parsed.hostname === 'github.com' && parsed.pathname.split('/').filter(Boolean).length >= 2;
+                if (parsed.hostname !== 'github.com') return false;
+                const parts = parsed.pathname.split('/').filter(Boolean);
+                if (parts.length < 2) return false;
+
+                const owner = parts[0];
+                const repo = parts[1].replace(/\.git$/, '');
+                const validNameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
+                return validNameRegex.test(owner) && validNameRegex.test(repo);
             } catch {
                 return false;
             }

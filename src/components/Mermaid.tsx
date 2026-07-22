@@ -15,12 +15,12 @@ function ensureMermaidInitialized() {
         securityLevel: 'loose',
         themeVariables: {
             background: '#0d1117',
-            primaryColor: '#2f9cff',
+            primaryColor: '#0070f3',
             primaryTextColor: '#c9d1d9',
             lineColor: '#30363d',
             actorBkg: '#161b22',
             actorBorder: '#30363d',
-            signalColor: '#58b8ff',
+            signalColor: '#3291ff',
             signalLineColor: '#30363d',
         }
     });

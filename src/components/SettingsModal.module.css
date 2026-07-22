@@ -271,7 +271,7 @@
 .inputField:focus, .selectField:focus {
     outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 2px rgba(47, 156, 255, 0.2);
+    box-shadow: 0 0 0 2px rgba(0, 112, 243, 0.2);
     background: var(--bg-tertiary);
 }
 
@@ -675,7 +675,7 @@
 }
 
 .customToggle input:checked + .customToggleSlider {
-    background-color: rgba(47, 156, 255, 0.2);
+    background-color: rgba(0, 112, 243, 0.2);
     border-color: var(--accent-primary);
 }
 
