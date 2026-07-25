@@ -24,13 +24,13 @@ const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 
 
 function getDefaultSettings(): Record<AIProviderType, ProviderSettings> {
   return {
-    gemini: { apiKey: '', model: 'gemini-3.1-pro' },
-    openai: { apiKey: '', model: 'gpt-5.2' },
-    anthropic: { apiKey: '', model: 'claude-sonnet-4.6' },
-    ollama: { apiKey: '', model: 'llama-4-scout', baseUrl: 'http://localhost:11434/v1' },
-    lmstudio: { apiKey: '', model: 'deepseek-r1-distill-llama-8b', baseUrl: 'http://127.0.0.1:1234/v1' },
-    glm: { apiKey: '', model: 'glm-5', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
-    kimi: { apiKey: '', model: 'kimi-k2.5', baseUrl: 'https://api.moonshot.cn/v1' },
+    gemini: { apiKey: '', model: 'gemini-2.5-pro' },
+    openai: { apiKey: '', model: 'gpt-4o' },
+    anthropic: { apiKey: '', model: 'claude-sonnet-4-6' },
+    ollama: { apiKey: '', model: 'llama4:scout', baseUrl: 'http://localhost:11434/v1' },
+    lmstudio: { apiKey: '', model: 'llama4-scout', baseUrl: 'http://127.0.0.1:1234/v1' },
+    glm: { apiKey: '', model: 'glm-4.7', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
+    kimi: { apiKey: '', model: 'kimi-k3', baseUrl: 'https://api.moonshot.cn/v1' },
   };
 }
 

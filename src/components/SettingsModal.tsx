@@ -16,7 +16,7 @@ import {
     Filter,
 } from 'lucide-react';
 import styles from './SettingsModal.module.css';
-import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
+import { type AIProviderType, PROVIDER_NAMES, getAvailableModels, MODEL_DESCRIPTIONS } from '@/services/ai-providers';
 import { api } from '@/lib/api-client';
 import { fireToast } from '@/stores/toast-store';
 import { useGithubToken } from '@/hooks/use-github-token';
@@ -319,7 +319,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 setTestError(null);
                                             }}
                                         >
-                                            <span className={styles.providerName}>{PROVIDER_NAMES[p]}</span>
+                                            <div className={styles.providerCardContent}>
+                                                <span className={styles.providerName}>{PROVIDER_NAMES[p]}</span>
+                                            </div>
                                             {activeProvider === p && <span className={styles.providerCheck}><Check size={12} /></span>}
                                         </button>
                                     ))}
@@ -380,7 +382,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     )}
 
                                     <div className={styles.field}>
-                                        <label className={styles.fieldLabel}>Model Selection</label>
+                                        <label className={styles.fieldLabel}>
+                                            <span>Model Selection ({PROVIDER_NAMES[activeProvider]})</span>
+                                        </label>
                                         <select
                                             className={styles.selectField}
                                             value={currentSettings.model}
@@ -391,7 +395,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         >
                                             {models.map(model => (
                                                 <option key={model} value={model}>
-                                                    {model}
+                                                    {model}{MODEL_DESCRIPTIONS[model] ? ` \u2014 ${MODEL_DESCRIPTIONS[model]}` : ''}
                                                 </option>
                                             ))}
                                         </select>

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Key, Check, AlertCircle, Loader2, Sparkles, ArrowRight, RefreshCw } from 'lucide-react';
 import styles from './SetupFlow.module.css';
-import { type AIProviderType, PROVIDER_NAMES, getAvailableModels } from '@/services/ai-providers';
+import { type AIProviderType, PROVIDER_NAMES, getAvailableModels, MODEL_DESCRIPTIONS } from '@/services/ai-providers';
 import { api } from '@/lib/api-client';
 import {
     useSettingsStore,
@@ -320,7 +320,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                                         setTestResult(null);
                                     }}
                                 >
-                                    {PROVIDER_NAMES[provider]}
+                                    <span>{PROVIDER_NAMES[provider]}</span>
                                 </button>
                             ))}
                         </div>
@@ -360,7 +360,9 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                             )}
 
                             <div className={styles.field}>
-                                <label className={styles.label}>Model</label>
+                                <label className={styles.label}>
+                                    Model Selection ({PROVIDER_NAMES[activeProvider]})
+                                </label>
                                 <select
                                     className="input"
                                     value={currentSettings.model}
@@ -368,7 +370,7 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                                 >
                                     {models.map(model => (
                                         <option key={model} value={model}>
-                                            {model}
+                                            {model}{MODEL_DESCRIPTIONS[model] ? ` \u2014 ${MODEL_DESCRIPTIONS[model]}` : ''}
                                         </option>
                                     ))}
                                 </select>

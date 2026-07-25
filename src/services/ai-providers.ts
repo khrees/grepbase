@@ -19,13 +19,13 @@ export interface AIProviderConfig {
 
 // Default models for each provider
 const DEFAULT_MODELS: Record<AIProviderType, string> = {
-    gemini: 'gemini-3.1-pro',
-    openai: 'gpt-5.2',
-    anthropic: 'claude-sonnet-4.6',
-    ollama: 'llama-4-scout',
-    lmstudio: 'deepseek-r1-distill-llama-8b',
-    glm: 'glm-5',
-    kimi: 'kimi-k2.5',
+    gemini: 'gemini-2.5-pro',
+    openai: 'gpt-4o',
+    anthropic: 'claude-sonnet-4-6',
+    ollama: 'llama4:scout',
+    lmstudio: 'llama4-scout',
+    glm: 'glm-4.7',
+    kimi: 'kimi-k3',
 };
 
 type GeminiModelEntry = {
@@ -134,13 +134,10 @@ function pickGeminiModel(requestedModel: string | undefined, discoveredModels: s
     }
 
     const preferredOrder = [
-        'gemini-3.1-pro',
-        'gemini-3.1-flash',
         'gemini-2.5-pro',
         'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
         'gemini-2.0-flash',
-        'gemini-1.5-pro',
-        'gemini-1.5-flash',
     ];
 
     const preferredAvailable = preferredOrder.find(model => discoveredModels.includes(model));
@@ -250,37 +247,74 @@ export function getAvailableModels(type: AIProviderType): string[] {
     switch (type) {
         case 'gemini':
             return [
-                'gemini-3.1-pro',
-                'gemini-3.1-flash',
                 'gemini-2.5-pro',
                 'gemini-2.5-flash',
+                'gemini-2.5-flash-lite',
                 'gemini-2.0-flash',
-                'gemini-1.5-pro',
-                'gemini-1.5-flash',
             ];
         case 'openai':
             return [
-                'gpt-5.3-codex',
-                'gpt-5.2',
-                'gpt-5.1',
-                'o3-mini',
+                'gpt-4o',
+                'gpt-4o-mini',
+                'gpt-5.6-sol',
+                'gpt-5.6-terra',
+                'gpt-5.6-luna',
+                'o3',
+                'o3-pro',
+                'o4-mini',
                 'o1',
+                'o1-mini',
             ];
         case 'anthropic':
             return [
-                'claude-sonnet-4.6',
-                'claude-opus-4.6',
-                'claude-3-5-sonnet-20241022',
-                'claude-3-5-haiku-20241022',
+                'claude-opus-4-8',
+                'claude-opus-4-7',
+                'claude-opus-4-6',
+                'claude-sonnet-4-6',
+                'claude-sonnet-4-5',
+                'claude-haiku-4-5',
             ];
         case 'ollama':
-            return ['llama-4-scout', 'llama3.2', 'llama3.1', 'codellama', 'mistral', 'phi3', 'qwen2.5', 'qwen3:8b', 'meta-llama-3.1-8b-instruct', 'qwen2.5-7b-instruct'];
+            return [
+                'llama4:scout',
+                'llama4:maverick',
+                'qwen3.6:27b',
+                'qwen3:8b',
+                'qwen3:30b',
+                'qwen3:235b',
+                'gemma3:9b',
+                'deepseek-r1:14b',
+                'deepseek-r1:32b',
+                'phi4:14b',
+            ];
         case 'lmstudio':
-            return ['deepseek-r1-distill-llama-8b', 'meta-llama-3.1-8b-instruct', 'qwen2.5-7b-instruct'];
+            return [
+                'llama4-scout',
+                'llama4-maverick',
+                'qwen3-30b-a3b',
+                'qwen3-8b',
+                'gemma3-9b-it',
+                'deepseek-r1-distill-qwen-14b',
+                'deepseek-r1-distill-llama-8b',
+            ];
         case 'glm':
-            return ['glm-5', 'glm-4-plus', 'glm-4'];
+            return [
+                'glm-4.7',
+                'glm-4.7-flash',
+                'glm-4.7-flashx',
+                'glm-4.6',
+                'glm-4.5',
+            ];
         case 'kimi':
-            return ['kimi-k2.5', 'kimi-v1'];
+            return [
+                'kimi-k3',
+                'kimi-k2.7-code',
+                'kimi-k2.7-code-highspeed',
+                'kimi-k2.6',
+                'moonshot-v1-128k',
+                'moonshot-v1-32k',
+                'moonshot-v1-8k',
+            ];
         default:
             return [];
     }
@@ -297,4 +331,66 @@ export const PROVIDER_NAMES: Record<AIProviderType, string> = {
     lmstudio: 'LMStudio (Local)',
     glm: 'GLM (Zhipu)',
     kimi: 'Kimi (Moonshot)',
+};
+
+/**
+ * Short descriptions for models shown in the selection UI
+ */
+export const MODEL_DESCRIPTIONS: Record<string, string> = {
+    // Gemini
+    'gemini-2.5-pro': 'Most capable, adaptive thinking',
+    'gemini-2.5-flash': 'Fast, price-performance optimized',
+    'gemini-2.5-flash-lite': 'Fastest, most cost-efficient',
+    'gemini-2.0-flash': 'Previous-gen, still capable',
+    // OpenAI
+    'gpt-4o': 'Versatile, high-intelligence flagship',
+    'gpt-4o-mini': 'Fast, affordable small model',
+    'gpt-5.6-sol': 'Flagship for complex reasoning & coding',
+    'gpt-5.6-terra': 'Balanced intelligence and cost',
+    'gpt-5.6-luna': 'Cost-sensitive, high-volume workloads',
+    'o3': 'Powerful reasoning model',
+    'o3-pro': 'Extra compute for better responses',
+    'o4-mini': 'Fast, cost-efficient reasoning',
+    'o1': 'Strong reasoning capabilities',
+    'o1-mini': 'Affordable reasoning model',
+    // Anthropic
+    'claude-opus-4-8': 'Most capable, agentic coding & enterprise',
+    'claude-opus-4-7': 'Advanced reasoning, 1M context',
+    'claude-opus-4-6': 'Excellent code review & debugging',
+    'claude-sonnet-4-6': 'Best speed + intelligence balance',
+    'claude-sonnet-4-5': 'Strong all-around performance',
+    'claude-haiku-4-5': 'Fastest, near-frontier intelligence',
+    // Ollama
+    'llama4:scout': 'Meta Llama 4, 10M context, MoE',
+    'llama4:maverick': 'Higher quality, 400B MoE',
+    'qwen3.6:27b': 'Best local coding model (SWE-bench 77%)',
+    'qwen3:8b': 'Efficient all-rounder',
+    'qwen3:30b': 'Strong MoE, 256K context',
+    'qwen3:235b': 'Frontier-level, 235B MoE',
+    'gemma3:9b': 'Google, vision support',
+    'deepseek-r1:14b': 'Reasoning & math specialist',
+    'deepseek-r1:32b': 'Advanced reasoning, 32B',
+    'phi4:14b': 'Microsoft, strong for its size',
+    // LMStudio
+    'llama4-scout': 'Meta Llama 4, general-purpose',
+    'llama4-maverick': 'Higher quality, 400B MoE',
+    'qwen3-30b-a3b': 'Strong MoE coding model',
+    'qwen3-8b': 'Efficient all-rounder',
+    'gemma3-9b-it': 'Google, vision support',
+    'deepseek-r1-distill-qwen-14b': 'Distilled reasoning, 14B',
+    'deepseek-r1-distill-llama-8b': 'Distilled reasoning, 8B',
+    // GLM
+    'glm-4.7': 'Latest flagship, coding & reasoning',
+    'glm-4.7-flash': 'Free-tier, fast & efficient',
+    'glm-4.7-flashx': 'Enhanced flash variant',
+    'glm-4.6': 'Strong coding capabilities',
+    'glm-4.5': 'Native agentic LLM',
+    // Kimi
+    'kimi-k3': 'Most capable, 2.8T params, 1M context',
+    'kimi-k2.7-code': 'Dedicated coding model',
+    'kimi-k2.7-code-highspeed': 'Fast coding, ~180 tok/s',
+    'kimi-k2.6': 'Visual + text, thinking modes',
+    'moonshot-v1-128k': 'Very long context (128K)',
+    'moonshot-v1-32k': 'Long context (32K)',
+    'moonshot-v1-8k': 'Short context (8K)',
 };

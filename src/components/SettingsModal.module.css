@@ -227,6 +227,14 @@
     margin-left: 6px;
 }
 
+.providerCardContent {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex: 1;
+    min-width: 0;
+}
+
 .providerName {
     white-space: normal;
     overflow: visible;
