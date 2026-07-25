@@ -38,7 +38,7 @@
 }
 
 .nodeSelected {
-    background: rgba(99, 102, 241, 0.15) !important;
+    background: rgba(0, 112, 243, 0.15) !important;
     color: var(--accent-primary) !important;
 }
 

@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { RATE_LIMITS, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { ensureRepoAccess } from '@/services/resource-access';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import { fetchCompareDiff } from '@/services/github';
 import { isSafeFilePath } from '@/lib/sanitize';
 
@@ -89,7 +90,8 @@ export async function GET(
             return NextResponse.json({ error: 'Base/head commits must belong to this repository' }, { status: 400 });
         }
 
-        const compare = await fetchCompareDiff(repo[0].owner, repo[0].name, baseSha, headSha);
+        const githubToken = await getStoredGithubToken(session.sessionId);
+        const compare = await fetchCompareDiff(repo[0].owner, repo[0].name, baseSha, headSha, githubToken ?? undefined);
         const filteredFiles = filePath
             ? compare.files.filter(
                 file => file.path === filePath || file.previousPath === filePath

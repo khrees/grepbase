@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { FileData } from '@/types';
 
-type CenterView = 'code' | 'diff' | 'story';
+type CenterView = 'code' | 'diff';
 type DiffScope = 'commit' | 'compare';
 
 interface ExploreState {
@@ -44,6 +44,14 @@ interface ExploreState {
   reset: () => void;
 }
 
+const DIFF_VIEW_MODE_KEY = 'grepbase:diff_view_mode';
+
+function getStoredDiffViewMode(): 'unified' | 'split' {
+  if (typeof window === 'undefined') return 'unified';
+  const saved = localStorage.getItem(DIFF_VIEW_MODE_KEY);
+  return saved === 'split' ? 'split' : 'unified';
+}
+
 const initialState = {
   currentIndex: 0,
   selectedFile: null as FileData | null,
@@ -51,7 +59,7 @@ const initialState = {
   sidebarTab: 'files' as 'commits' | 'files',
   commitOrder: 'asc' as 'asc' | 'desc',
   diffScope: 'commit' as DiffScope,
-  diffViewMode: 'unified' as 'unified' | 'split',
+  diffViewMode: getStoredDiffViewMode(),
   focusMode: false,
   aiPanelExpanded: true,
   showSettings: false,
@@ -70,7 +78,12 @@ export const useExploreStore = create<ExploreState>((set) => ({
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
   setCommitOrder: (order) => set({ commitOrder: order }),
   setDiffScope: (scope) => set({ diffScope: scope }),
-  setDiffViewMode: (mode) => set({ diffViewMode: mode }),
+  setDiffViewMode: (mode) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(DIFF_VIEW_MODE_KEY, mode);
+    }
+    set({ diffViewMode: mode });
+  },
   toggleFocusMode: () => set(s => ({ focusMode: !s.focusMode })),
   toggleAiPanel: () => set(s => ({ aiPanelExpanded: !s.aiPanelExpanded })),
   setShowSettings: (show) => set({ showSettings: show }),
@@ -94,5 +107,8 @@ export const useExploreStore = create<ExploreState>((set) => ({
     set(s => ({ currentIndex: Math.max(s.currentIndex - 1, 0) }));
   },
 
-  reset: () => set(initialState),
+  reset: () => set({
+    ...initialState,
+    diffViewMode: getStoredDiffViewMode(),
+  }),
 }));

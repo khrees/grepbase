@@ -339,7 +339,7 @@ export default function TimelinePage({ params }: { params: Promise<{ id: string;
                                             {commit.sha.substring(0, 7)}
                                         </code>
                                     </div>
-                                    <p className={styles.commitMessage}>
+                                    <p className={styles.commitMessage} title={commit.message.split('\n')[0]}>
                                         {commit.message.split('\n')[0]}
                                     </p>
                                     <span className={styles.commitAuthor}>

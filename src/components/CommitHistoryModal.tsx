@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { X, Clock, GitCommit } from 'lucide-react';
 import styles from './CommitHistoryModal.module.css';
 import CalendarTimeline from './CalendarTimeline';
@@ -13,6 +13,8 @@ interface CommitHistoryModalProps {
     currentIndex: number;
     onSelectCommit: (index: number) => void;
     initialDate?: Date | null;
+    pinnedBaseSha?: string | null;
+    onPinAsBase?: (sha: string) => void;
 }
 
 export default function CommitHistoryModal({
@@ -22,8 +24,35 @@ export default function CommitHistoryModal({
     currentIndex,
     onSelectCommit,
     initialDate = null,
+    pinnedBaseSha,
+    onPinAsBase,
 }: CommitHistoryModalProps) {
     const [selectedDate, setSelectedDate] = useState<Date | null>(initialDate);
+
+    // Auto-select date of current commit when modal opens if no initial date set
+    /* eslint-disable react-hooks/set-state-in-effect */
+    useEffect(() => {
+        if (isOpen) {
+            if (initialDate) {
+                setSelectedDate(initialDate);
+            } else if (commits[currentIndex]?.date) {
+                setSelectedDate(new Date(commits[currentIndex].date));
+            }
+        }
+    }, [isOpen, initialDate, commits, currentIndex]);
+    /* eslint-enable react-hooks/set-state-in-effect */
+
+    // Close on Escape key
+    useEffect(() => {
+        if (!isOpen) return;
+        function handleKeyDown(e: KeyboardEvent) {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen, onClose]);
 
     const filteredCommits = useMemo(() => {
         if (!selectedDate) return commits;
@@ -116,6 +145,8 @@ export default function CommitHistoryModal({
                                         const commit = filteredCommits[clickedIndex];
                                         handleCommitClick(commit);
                                     }}
+                                    pinnedBaseSha={pinnedBaseSha}
+                                    onPinAsBase={onPinAsBase}
                                 />
                             ) : (
                                 <div className={styles.timelineWarning}>

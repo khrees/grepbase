@@ -6,8 +6,8 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(7, 13, 24, 0.78);
-    backdrop-filter: blur(4px);
+    background: rgba(7, 10, 16, 0.75);
+    backdrop-filter: blur(6px);
     z-index: 100;
     display: flex;
     align-items: center;
@@ -16,14 +16,14 @@
 }
 
 .modal {
-    background: linear-gradient(155deg, #101f35 0%, #0d1a2f 58%, #0f2037 100%);
-    width: 90vw;
-    height: 85vh;
+    background: linear-gradient(160deg, #0e1a28 0%, #0c1520 50%, var(--bg-secondary) 100%);
+    width: min(88vw, 1000px);
+    height: min(80vh, 700px);
     border-radius: var(--radius-xl);
-    border: 1px solid rgba(129, 183, 214, 0.34);
+    border: 1px solid var(--border-default);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 24px 44px rgba(7, 14, 26, 0.5);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
     animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     overflow: hidden;
 }
@@ -32,15 +32,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-lg) var(--space-xl);
-    border-bottom: 1px solid rgba(129, 183, 214, 0.24);
-    background: rgba(19, 36, 58, 0.92);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-primary);
 }
 
 .header h2 {
-    font-size: 1.25rem;
+    font-size: 1.1rem;
     font-weight: 600;
-    color: #ecf8ff;
+    color: var(--text-primary);
     margin: 0;
     display: flex;
     align-items: center;
@@ -56,18 +56,18 @@
     border-radius: var(--radius-md);
     border: none;
     background: transparent;
-    color: #9ec0d9;
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-fast);
 }
 
 .closeBtn:hover {
-    background: rgba(78, 200, 255, 0.18);
-    color: #f2fbff;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary);
 }
 
 .closeBtn:focus-visible {
-    outline: 2px solid rgba(0, 112, 243, 0.8);
+    outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
 }
 
@@ -75,13 +75,13 @@
     flex: 1;
     display: flex;
     overflow: hidden;
-    background: #10213a;
+    background: rgba(7, 10, 16, 0.6);
 }
 
 .calendarSection {
     flex: 2;
-    padding: var(--space-sm);
-    border-right: 1px solid rgba(129, 183, 214, 0.2);
+    padding: var(--space-md);
+    border-right: 1px solid var(--border-subtle);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -90,21 +90,21 @@
 
 .timelineSection {
     flex: 1;
-    min-width: 350px;
+    min-width: 320px;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, rgba(18, 36, 59, 0.95), rgba(14, 28, 46, 0.95));
-    border-left: 1px solid rgba(129, 183, 214, 0.2);
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-subtle);
 }
 
 .sectionTitle {
-    font-size: 0.85rem;
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #89abc4;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
     padding: var(--space-md) var(--space-lg);
-    border-bottom: 1px solid rgba(129, 183, 214, 0.2);
+    border-bottom: 1px solid var(--border-subtle);
 }
 
 .sectionTitleRow {
@@ -122,28 +122,28 @@
 }
 
 .clearFilterBtn {
-    border: 1px solid rgba(129, 183, 214, 0.34);
-    background: rgba(24, 53, 83, 0.62);
-    color: #a8c8dd;
+    border: 1px solid var(--border-default);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
     border-radius: var(--radius-sm);
     height: 26px;
-    padding: 0 8px;
+    padding: 0 10px;
     font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font-weight: 700;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     cursor: pointer;
     transition: all var(--transition-fast);
 }
 
 .clearFilterBtn:hover {
-    border-color: rgba(78, 200, 255, 0.62);
-    color: #f2fbff;
-    background: rgba(78, 200, 255, 0.18);
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+    background: rgba(0, 112, 243, 0.12);
 }
 
 .clearFilterBtn:focus-visible {
-    outline: 2px solid rgba(0, 112, 243, 0.75);
+    outline: 2px solid var(--accent-primary);
     outline-offset: 2px;
 }
 
@@ -155,7 +155,7 @@
 .timelineWarning {
     padding: var(--space-lg);
     text-align: center;
-    color: #a6c3d8;
+    color: var(--text-muted);
     font-style: italic;
 }
 

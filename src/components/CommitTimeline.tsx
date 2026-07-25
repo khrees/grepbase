@@ -67,9 +67,13 @@ export default function CommitTimeline({
                         </div>
                         <div className={styles.timelineContent}>
                             <span className={styles.timelineOrder}>#{index + 1}</span>
-                            <span className={styles.timelineMessage}>
-                                {commit.message.split('\n')[0].substring(0, 50)}
-                                {commit.message.length > 50 ? '...' : ''}
+                            <span className={styles.timelineMessage} title={commit.message.split('\n')[0] || ''}>
+                                {(() => {
+                                    const firstLine = commit.message.split('\n')[0] || '';
+                                    const truncated = firstLine.substring(0, 50);
+                                    const hasMore = firstLine.length > 50 || commit.message.includes('\n');
+                                    return `${truncated}${hasMore ? '...' : ''}`;
+                                })()}
                             </span>
                         </div>
                     </button>

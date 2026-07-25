@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Github, ArrowRight, Loader2, BookOpen } from 'lucide-react';
+import { GitBranch, ArrowRight, Loader2, BookOpen } from 'lucide-react';
 import { api } from '@/lib/api-client';
 import { Logo } from '@/components/Logo';
 import BranchPicker from '@/components/BranchPicker';
@@ -227,7 +227,7 @@ export default function ClientHero({ styles }: { styles: Record<string, string> 
 
                 <form onSubmit={handleSubmit} className={styles.searchForm}>
                     <div className={styles.inputWrapper}>
-                        <Github size={20} className={styles.inputIcon} />
+                        <GitBranch size={20} className={styles.inputIcon} />
                         <input
                             type="text"
                             className={`${styles.searchInput} ${validationError ? styles.searchInputError : ''}`}

@@ -7,6 +7,7 @@ import { RATE_LIMITS, INGEST, COMMIT_SHA_REGEX } from '@/lib/constants';
 import { shouldFetchFileContent } from '@/lib/file-utils';
 import { applyPrivateNoStoreHeaders, enforceRateLimit, resolveSession } from '@/lib/api-security';
 import { ensureRepoAccess } from '@/services/resource-access';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import { fetchFilesAtCommit, getLanguageFromPath } from '@/services/github';
 
 export async function GET(
@@ -80,7 +81,8 @@ export async function GET(
             );
         }
 
-        const githubFiles = await fetchFilesAtCommit(repo[0].owner, repo[0].name, sha);
+        const githubToken = await getStoredGithubToken(session.sessionId);
+        const githubFiles = await fetchFilesAtCommit(repo[0].owner, repo[0].name, sha, githubToken ?? undefined);
 
         const filesToSave = githubFiles.map((file) => ({
             commitId: commit[0].id,

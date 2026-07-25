@@ -283,7 +283,7 @@
 .summaryHeader {
     padding: var(--space-xl);
     border-bottom: 1px solid var(--border-subtle);
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.05));
+    background: linear-gradient(135deg, rgba(0, 112, 243, 0.08), rgba(50, 145, 255, 0.04));
 }
 
 .repoTitle h1 {

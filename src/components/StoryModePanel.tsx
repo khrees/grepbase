@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Sparkles, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import styles from './StoryModePanel.module.css';
 import { getAISettings } from '@/stores/settings-store';
 import { api } from '@/lib/api-client';
 import type { Commit, Repository } from '@/types';
+import Mermaid from './Mermaid';
 
 const CHAPTER_SIZE = 10;
 
@@ -14,6 +16,8 @@ interface StoryModePanelProps {
     commits: Commit[];
     currentIndex: number;
     onNavigateToCommit: (index: number) => void;
+    onOpenFile?: (path: string) => void;
+    visibleFilePaths?: string[];
     onOpenSettings?: () => void;
 }
 
@@ -26,6 +30,31 @@ function chapterRange(chapterIndex: number, totalCommits: number): { start: numb
     const start = chapterIndex * CHAPTER_SIZE;
     const end = Math.min(start + CHAPTER_SIZE - 1, totalCommits - 1);
     return { start, end };
+}
+
+function normalizeFileReference(raw: string): string | null {
+    const value = raw.trim();
+    if (!value) return null;
+    return value
+        .replace(/^[`"'([{<]+/, '')
+        .replace(/[`"')\]}>.,;:!?]+$/, '')
+        .replace(/^[./]+/, '')
+        .replace(/^\/+/, '');
+}
+
+function extractFileReferenceFromHref(href?: string): string | null {
+    if (!href) return null;
+    let candidate = href.trim();
+    if (candidate.startsWith('file://')) candidate = candidate.slice(7);
+    else if (candidate.startsWith('file:')) candidate = candidate.slice(5);
+    return normalizeFileReference(candidate);
+}
+
+function extractCommitShaFromHref(href?: string): string | null {
+    if (!href) return null;
+    let candidate = href.trim();
+    if (candidate.startsWith('commit:')) candidate = candidate.slice(7);
+    return candidate.trim();
 }
 
 function buildTextSummary(chapterCommits: Commit[], chapterIdx: number): string {
@@ -42,7 +71,7 @@ function buildTextSummary(chapterCommits: Commit[], chapterIdx: number): string 
             first.date !== last.date
                 ? `${fmtDate(first.date)} → ${fmtDate(last.date)}`
                 : fmtDate(first.date);
-        lines.push(`**${dateRange}** · ${chapterCommits.length} commit${chapterCommits.length !== 1 ? 's' : ''}\n`);
+        lines.push(`**Timeline Scope:** ${dateRange} · ${chapterCommits.length} commit${chapterCommits.length !== 1 ? 's' : ''}\n`);
     }
 
     const authorCounts = new Map<string, number>();
@@ -59,11 +88,12 @@ function buildTextSummary(chapterCommits: Commit[], chapterIdx: number): string 
     }
 
     lines.push('---\n');
+    lines.push('### Commits in this Chapter\n');
 
     for (const commit of chapterCommits) {
         const firstLine = commit.message.split('\n')[0].trim();
         const date = new Date(commit.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        lines.push(`- \`${commit.sha.slice(0, 7)}\` **${date}** — ${firstLine}`);
+        lines.push(`- [\`${commit.sha.slice(0, 7)}\`](commit:${commit.sha}) **${date}** — ${firstLine}`);
     }
 
     return lines.join('\n');
@@ -74,6 +104,8 @@ export default function StoryModePanel({
     commits,
     currentIndex,
     onNavigateToCommit,
+    onOpenFile,
+    visibleFilePaths: _visibleFilePaths,
     onOpenSettings,
 }: StoryModePanelProps) {
     const totalChapters = Math.ceil(commits.length / CHAPTER_SIZE);
@@ -212,6 +244,7 @@ export default function StoryModePanel({
 
     return (
         <div className={styles.container}>
+            {/* Nav Header */}
             <div className={styles.chapterNav}>
                 <button
                     className={styles.chapterArrow}
@@ -230,7 +263,7 @@ export default function StoryModePanel({
                         <span className={styles.chapterRange}>
                             {shortSha(startCommit.sha)} → {shortSha(endCommit.sha)}
                             <span className={styles.commitCount}>
-                                {end - start + 1} commits
+                                ({end - start + 1} commits)
                             </span>
                         </span>
                     )}
@@ -250,27 +283,39 @@ export default function StoryModePanel({
                         className={styles.regenerate}
                         onClick={handleRegenerate}
                         disabled={loading}
-                        title="Regenerate this chapter"
+                        title="Regenerate chapter narrative"
                     >
-                        {loading
-                            ? <Loader2 size={13} className={styles.spinner} />
-                            : <Sparkles size={13} />
-                        }
+                        {loading ? (
+                            <Loader2 size={13} className={styles.spinner} />
+                        ) : (
+                            <RefreshCw size={13} />
+                        )}
                     </button>
                 ) : (
                     <button
                         className={styles.generateAiBtn}
                         onClick={handleGenerateWithAI}
                         disabled={loading}
-                        title="Generate AI narrative for this chapter"
+                        title="Generate AI narrative summary"
                     >
-                        {loading
-                            ? <Loader2 size={13} className={styles.spinner} />
-                            : <Sparkles size={13} />
-                        }
-                        {loading ? 'Generating...' : 'Generate with AI'}
+                        {loading ? (
+                            <Loader2 size={13} className={styles.spinner} />
+                        ) : (
+                            <Sparkles size={13} />
+                        )}
+                        <span>{loading ? 'Analyzing...' : 'Generate Story'}</span>
                     </button>
                 )}
+            </div>
+
+            {/* Timeline Progress Bar indicator */}
+            <div className={styles.timelineProgressGutter}>
+                <div 
+                    className={styles.timelineProgressBar}
+                    style={{
+                        width: `${((chapterIndex + 1) / totalChapters) * 100}%`
+                    }}
+                />
             </div>
 
             {error && <div className={styles.error}>{error}</div>}
@@ -279,23 +324,130 @@ export default function StoryModePanel({
                 <div className={styles.storyContent}>
                     {loading && !story && (
                         <div className={styles.generating}>
-                            <Loader2 size={16} className={styles.spinner} />
-                            Generating chapter {chapterIndex + 1}...
+                            <Loader2 size={18} className={styles.spinner} />
+                            <span>Synthesizing repository logs for Chapter {chapterIndex + 1}...</span>
                         </div>
                     )}
                     {story && (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{story}</ReactMarkdown>
+                        <div className={styles.markdownContent}>
+                            <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                rehypePlugins={[rehypeRaw]}
+                                components={{
+                                    a: ({ href, children, ...props }) => {
+                                        const commitSha = extractCommitShaFromHref(href);
+                                        if (commitSha) {
+                                            const idx = commits.findIndex(c => c.sha.startsWith(commitSha));
+                                            if (idx !== -1) {
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        className={styles.inlineCommitLink}
+                                                        onClick={() => onNavigateToCommit(idx)}
+                                                        title={`Jump to commit ${commitSha.slice(0, 7)}`}
+                                                    >
+                                                        {children}
+                                                    </button>
+                                                );
+                                            }
+                                        }
+
+                                        const fileReference = extractFileReferenceFromHref(href);
+                                        if (fileReference && onOpenFile) {
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    className={styles.inlineFileLink}
+                                                    onClick={() => onOpenFile(fileReference)}
+                                                    title={`Open ${fileReference}`}
+                                                >
+                                                    <code>{children}</code>
+                                                </button>
+                                            );
+                                        }
+
+                                        const isExternal = typeof href === 'string' && /^(https?:)?\/\//i.test(href);
+                                        return (
+                                            <a
+                                                {...props}
+                                                href={href}
+                                                target={isExternal ? '_blank' : undefined}
+                                                rel={isExternal ? 'noreferrer noopener' : undefined}
+                                            >
+                                                {children}
+                                            </a>
+                                        );
+                                    },
+                                    code: ({ className, children, ...props }) => {
+                                        const text = Array.isArray(children)
+                                            ? children.map(child => String(child)).join('')
+                                            : String(children ?? '');
+                                        const cleanText = text.trim();
+                                        const match = /language-(\w+)/.exec(className || '');
+                                        const isMermaid = match && match[1] === 'mermaid';
+
+                                        if (isMermaid) {
+                                            return <Mermaid chart={cleanText} />;
+                                        }
+
+                                        const isCodeBlock = Boolean(className) || cleanText.includes('\n');
+                                        
+                                        // Inline commit check
+                                        if (!isCodeBlock && /^[0-9a-f]{7,40}$/i.test(cleanText)) {
+                                            const idx = commits.findIndex(c => c.sha.startsWith(cleanText));
+                                            if (idx !== -1) {
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        className={styles.inlineCommitLink}
+                                                        onClick={() => onNavigateToCommit(idx)}
+                                                        title={`Jump to commit ${cleanText.slice(0, 7)}`}
+                                                    >
+                                                        <code>{cleanText.slice(0, 7)}</code>
+                                                    </button>
+                                                );
+                                            }
+                                        }
+
+                                        // Inline file check
+                                        if (!isCodeBlock && onOpenFile) {
+                                            const fileRef = normalizeFileReference(cleanText);
+                                            if (fileRef && (fileRef.includes('.') || fileRef.includes('/'))) {
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        className={styles.inlineFileLink}
+                                                        onClick={() => onOpenFile(fileRef)}
+                                                        title={`Open ${fileRef}`}
+                                                    >
+                                                        <code>{cleanText}</code>
+                                                    </button>
+                                                );
+                                            }
+                                        }
+
+                                        return (
+                                            <code className={className} {...props}>
+                                                {children}
+                                            </code>
+                                        );
+                                    }
+                                }}
+                            >
+                                {story}
+                            </ReactMarkdown>
+                        </div>
                     )}
                     {!aiGenerated && !loading && story && (
                         <div className={styles.aiUpgrade}>
                             <Sparkles size={14} />
                             <span>
-                                Want a narrative summary?{' '}
+                                Want an AI narrative and architectural diagram?{' '}
                                 <button className={styles.settingsLink} onClick={handleGenerateWithAI}>
-                                    Generate with AI
+                                    Generate Story
                                 </button>
                                 {!getAISettings() && onOpenSettings && (
-                                    <> — <button className={styles.settingsLink} onClick={onOpenSettings}>configure a provider first</button></>
+                                    <> — <button className={styles.settingsLink} onClick={onOpenSettings}>configure settings first</button></>
                                 )}
                             </span>
                         </div>

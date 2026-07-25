@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Sparkles, Send, Loader2, AlertCircle, RefreshCw, X, Clock, Square } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import styles from './AIPanel.module.css';
 import { getAISettings, getAutoExplainEnabled } from '@/stores/settings-store';
 import { api } from '@/lib/api-client';
@@ -452,6 +453,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                                         message.content ? (
                                             <ReactMarkdown
                                                 remarkPlugins={[remarkGfm]}
+                                                rehypePlugins={[rehypeRaw]}
                                                 components={{
                                                     a: ({ href, children, ...props }) => {
                                                         const fileReference = extractFileReferenceFromHref(href);

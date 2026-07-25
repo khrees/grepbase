@@ -88,6 +88,7 @@ export interface StoryCommit {
     message: string;
     authorName: string | null;
     date: Date;
+    changedFiles?: string[];
 }
 
 /**
@@ -270,7 +271,7 @@ Please explain:
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        maxOutputTokens: 1500,
+        maxOutputTokens: 2500,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TIER.SLOW); // Project explanation might change more often?
         },
@@ -293,24 +294,35 @@ export async function explainStory(
     const normalizedChapterSize = Math.max(2, Math.min(12, chapterSize));
     const commitsList = commits
         .map((commit, index) => {
-            const title = commit.message.split('\n')[0] || 'No message';
-            return `${index + 1}. ${commit.sha.slice(0, 7)} - ${title} (${commit.authorName || 'Unknown'}, ${commit.date.toISOString().slice(0, 10)})`;
+            const lines = commit.message.split('\n');
+            const title = lines[0]?.trim() || 'No message';
+            const body = lines.slice(1).join('\n').trim();
+            const messageContext = body 
+                ? `\n   Commit Desc: ${body.substring(0, 180)}${body.length > 180 ? '...' : ''}`
+                : '';
+            const filesContext = commit.changedFiles && commit.changedFiles.length > 0
+                ? `\n   Modified Files:\n   ${commit.changedFiles.slice(0, 15).map(f => `  * ${f}`).join('\n   ')}${commit.changedFiles.length > 15 ? `\n   ... and ${commit.changedFiles.length - 15} more files` : ''}`
+                : '';
+            return `${index + 1}. ${commit.sha.slice(0, 7)} - ${title} (${commit.authorName || 'Unknown'}, ${commit.date.toISOString().slice(0, 10)})${messageContext}${filesContext}`;
         })
-        .join('\n');
+        .join('\n\n');
 
-    const systemPrompt = `You are an expert software historian helping engineers understand how a project evolved.
-
-Turn commit history into a coherent technical story.
-
-Output requirements:
-- Return markdown only, no code fences wrapping the full output.
-- Start with a single H1 title.
-- Group the timeline into clear chapters with H2 headings.
-- Each chapter should cover around ${normalizedChapterSize} commits and include:
-  - What changed
-  - Why it likely changed
-  - Technical implications
-- End with a short "What's next" section with concrete follow-up directions.`;
+    const systemPrompt = `You are an expert software historian and technical architect helping engineers understand how a codebase evolved.
+ 
+    Turn the provided chronological commit timeline slice into a coherent, deep technical chapter narrative.
+ 
+    Output requirements:
+    - Return markdown only, no code fences wrapping the full output.
+    - Start with a single H1 title for this chapter.
+    - Organize the timeline using structured H2 and H3 headings representing key themes or phases in these commits.
+    - Include a beautifully structured, valid Mermaid diagram (e.g. graph TD, sequenceDiagram, etc.) inside a \`\`\`mermaid block that visually illustrates the structural or data-flow changes introduced during this chapter.
+    - For every key commit referenced, use the exact format [\`sha\`](commit:sha) (e.g. [\`a1b2c3d\`](commit:a1b2c3d)) so the user can click it to jump to that commit in the timeline.
+    - For every key repository file referenced, use the exact format [\`path/to/file.ext\`](file:path/to/file.ext) so the user can click it to open the file.
+    - Cover:
+      - What architectural changes occurred
+      - Why they were made (intent)
+      - Technical implications and files affected
+    - End with a short "Evolution Highlights" summary list.`;
 
     const userPrompt = `Project: ${sanitizePromptInput(project.name, 200)}
 ${project.description ? `Description: ${sanitizePromptInput(project.description, 1000)}` : ''}
@@ -338,7 +350,7 @@ Write a narrated walkthrough of this evolution.`;
         model,
         system: systemPrompt,
         prompt: userPrompt,
-        maxOutputTokens: 1800,
+        maxOutputTokens: 3000,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TIER.SLOW);
         },
@@ -445,7 +457,7 @@ ${contextText}`;
         model,
         system: systemPrompt,
         prompt: question,
-        maxOutputTokens: 800,
+        maxOutputTokens: 3000,
         onFinish: ({ text }) => {
             cache.set(cacheKey, text, CACHE_TIER.IMMUTABLE);
         },

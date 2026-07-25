@@ -28,6 +28,7 @@ interface IngestOptions {
     clearExisting?: boolean;
     /** Specific commit SHA to start fetching backwards from */
     startSha?: string;
+    githubToken?: string;
 }
 
 export async function processRepoIngestion({
@@ -40,6 +41,7 @@ export async function processRepoIngestion({
     branch,
     clearExisting,
     startSha,
+    githubToken,
 }: IngestOptions): Promise<void> {
     const processLogger = logger.child({ jobId, url, clientId, worker: true });
 
@@ -71,8 +73,8 @@ export async function processRepoIngestion({
         // 3. Fetch repo details and README in parallel
         processLogger.debug({ owner, repoName }, 'Fetching repository details');
         const [repoDetails, readme] = await Promise.all([
-            fetchRepository(owner, repoName),
-            fetchReadme(owner, repoName),
+            fetchRepository(owner, repoName, githubToken),
+            fetchReadme(owner, repoName, githubToken),
         ]);
 
         // 4. Save/update repository in DB
@@ -158,7 +160,7 @@ export async function processRepoIngestion({
             const pageSize = Math.min(PER_PAGE, remaining);
             // If startSha is provided, use it instead of branch to fetch from that specific point backwards
             const targetRef = startSha || branch;
-            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize, targetRef);
+            const pageCommits = await fetchCommitHistoryPage(owner, repoName, page, pageSize, targetRef, githubToken);
 
             if (pageCommits.length === 0) {
                 expectedCommits = Math.max(1, processedCommits);
@@ -257,8 +259,7 @@ export async function processRepoIngestion({
                 if (dbCommit.length > 0) {
                     const commitId = dbCommit[0].id;
 
-                    // Fetch files from GitHub
-                    const githubFiles = await fetchFilesAtCommit(owner, repoName, sha);
+                    const githubFiles = await fetchFilesAtCommit(owner, repoName, sha, githubToken);
 
                     // Prepare file records without content
                     const filesToSave = githubFiles.map((file) => ({

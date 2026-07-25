@@ -14,7 +14,7 @@ const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 
 const ENCRYPTION_SECRET_ENV_KEYS = ['AI_CREDENTIALS_ENCRYPTION_KEY', 'AI_CREDENTIALS_SECRET', 'SESSION_SECRET'] as const;
 const SIGNING_SECRET_ENV_KEYS = ['AI_CREDENTIALS_SIGNING_KEY', ...ENCRYPTION_SECRET_ENV_KEYS] as const;
 
-type StoredCredentialMap = Partial<Record<AIProviderType, string>>;
+type StoredCredentialMap = Partial<Record<AIProviderType, string>> & { github?: string };
 type EncryptedCredentialBlob = {
     version: 1;
     iv: string;
@@ -53,6 +53,12 @@ function normalizeCredentialMap(raw: unknown): StoredCredentialMap {
 
     const normalized: StoredCredentialMap = {};
     for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (key === 'github') {
+            if (typeof value === 'string' && value.trim()) {
+                normalized.github = value.trim();
+            }
+            continue;
+        }
         if (!isProvider(key)) continue;
         if (typeof value !== 'string') continue;
         const trimmed = value.trim();
@@ -291,4 +297,33 @@ export async function getStoredProviderStatus(
         glm: Boolean(credentials.glm),
         kimi: Boolean(credentials.kimi),
     };
+}
+
+export async function getStoredGithubToken(
+    sessionId: string
+): Promise<string | null> {
+    const credentials = await getStoredCredentialMap(sessionId);
+    const value = credentials.github;
+    return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+export async function upsertStoredGithubToken(
+    sessionId: string,
+    token: string
+): Promise<void> {
+    const nextToken = token.trim();
+    const credentials = await getStoredCredentialMap(sessionId);
+
+    if (nextToken.length === 0) {
+        delete credentials.github;
+    } else {
+        credentials.github = nextToken;
+    }
+
+    if (Object.keys(credentials).length === 0) {
+        await deleteBlob(sessionId);
+        return;
+    }
+
+    await writeBlob(sessionId, await encryptCredentialMap(credentials));
 }

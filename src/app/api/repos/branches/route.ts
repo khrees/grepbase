@@ -6,6 +6,7 @@ import {
     enforceRateLimit,
     resolveSession,
 } from '@/lib/api-security';
+import { getStoredGithubToken } from '@/services/ai-credentials';
 import { RATE_LIMITS } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -38,7 +39,8 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        const result = await fetchRepoBranches(owner, repo);
+        const token = session?.sessionId ? await getStoredGithubToken(session.sessionId) : null;
+        const result = await fetchRepoBranches(owner, repo, token ?? undefined);
         return applyPrivateNoStoreHeaders(NextResponse.json(result));
     } catch (err) {
         requestLogger.error({ error: err }, 'Failed to fetch branches');

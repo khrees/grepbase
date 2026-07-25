@@ -11,7 +11,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    padding: 10px var(--space-md);
+    padding: 12px var(--space-lg);
     border-bottom: 1px solid var(--border-subtle);
     background: var(--bg-secondary);
     flex-shrink: 0;
@@ -29,12 +29,13 @@
     color: var(--text-secondary);
     cursor: pointer;
     flex-shrink: 0;
-    transition: border-color 0.15s, color 0.15s;
+    transition: all var(--transition-fast);
 }
 
 .chapterArrow:hover:not(:disabled) {
     border-color: var(--accent-primary);
     color: var(--text-primary);
+    background: var(--bg-elevated);
 }
 
 .chapterArrow:disabled {
@@ -51,7 +52,7 @@
 }
 
 .chapterLabel {
-    font-size: 0.78rem;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--text-primary);
     letter-spacing: 0.01em;
@@ -83,12 +84,13 @@
     color: var(--text-muted);
     cursor: pointer;
     flex-shrink: 0;
-    transition: border-color 0.15s, color 0.15s;
+    transition: all var(--transition-fast);
 }
 
 .regenerate:hover:not(:disabled) {
     border-color: var(--accent-primary);
     color: var(--accent-primary);
+    background: rgba(255, 255, 255, 0.02);
 }
 
 .regenerate:disabled {
@@ -96,97 +98,204 @@
     cursor: not-allowed;
 }
 
+/* ── Timeline Progress Indicator Bar ── */
+.timelineProgressGutter {
+    width: 100%;
+    height: 3px;
+    background: var(--border-subtle);
+    position: relative;
+    flex-shrink: 0;
+}
+
+.timelineProgressBar {
+    height: 100%;
+    background: var(--accent-primary);
+    transition: width var(--transition-slow) cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 0 8px var(--accent-primary);
+}
+
 /* ── States ── */
 .error {
     margin: var(--space-md);
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-sm);
-    background: rgba(239, 68, 68, 0.15);
-    color: #ffb1b8;
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(238, 0, 0, 0.1);
+    color: #ff5555;
+    border: 1px solid rgba(238, 0, 0, 0.2);
     font-size: 0.85rem;
-}
-
-.emptyState {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    color: var(--text-muted);
-    padding: var(--space-xl);
-    font-size: 0.88rem;
 }
 
 .generating {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    color: var(--text-muted);
+    gap: var(--space-md);
+    color: var(--text-secondary);
     font-size: 0.85rem;
-    padding-bottom: var(--space-md);
+    padding: var(--space-lg);
+    background: rgba(255, 255, 255, 0.01);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-lg);
 }
 
 /* ── Story content ── */
 .storyContent {
     flex: 1;
-    overflow: auto;
-    padding: var(--space-lg);
+    overflow-y: auto;
+    padding: var(--space-xl);
     color: var(--text-secondary);
     line-height: 1.7;
 }
 
-.storyContent :global(h1),
-.storyContent :global(h2),
-.storyContent :global(h3) {
-    color: var(--text-primary);
-    margin-top: var(--space-lg);
-    margin-bottom: var(--space-sm);
+.markdownContent {
+    font-size: 0.88rem;
 }
 
-.storyContent :global(h1) {
+.markdownContent h1,
+.markdownContent h2,
+.markdownContent h3,
+.markdownContent h4 {
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-top: var(--space-lg);
+    margin-bottom: var(--space-xs);
+}
+
+.markdownContent h1 {
+    font-size: 1.25rem;
+    border-bottom: 1px solid var(--border-default);
+    padding-bottom: 8px;
     margin-top: 0;
 }
 
-.storyContent :global(ul),
-.storyContent :global(ol) {
-    padding-left: 1.2rem;
-    margin-bottom: var(--space-md);
+.markdownContent h2 {
+    font-size: 1.08rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 4px;
 }
 
-.storyContent :global(p) {
-    margin-bottom: var(--space-md);
+.markdownContent h3 {
+    font-size: 0.95rem;
 }
 
-.storyContent :global(code) {
+.markdownContent ul,
+.markdownContent ol {
+    margin: var(--space-sm) 0 var(--space-md) var(--space-lg);
+    padding-left: 0;
+}
+
+.markdownContent li {
+    margin: var(--space-xs) 0;
+}
+
+.markdownContent p {
+    margin: var(--space-sm) 0;
+}
+
+.markdownContent code {
     font-family: var(--font-mono);
     font-size: 0.82em;
-    background: var(--bg-tertiary);
-    padding: 1px 5px;
-    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.markdownContent pre {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border-default);
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    margin: var(--space-md) 0;
+}
+
+.markdownContent pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+/* ── Interactive Monospace Link Badges ── */
+.inlineCommitLink, .inlineFileLink {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    font: inherit;
+    line-height: inherit;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+}
+
+.inlineCommitLink code {
+    background: rgba(0, 112, 243, 0.08) !important;
+    border: 1px solid rgba(0, 112, 243, 0.2) !important;
+    color: var(--accent-primary) !important;
+    padding: 1px 6px !important;
+    border-radius: 4px !important;
+    font-family: var(--font-mono) !important;
+    transition: all var(--transition-fast) !important;
+}
+
+.inlineCommitLink:hover code {
+    background: rgba(0, 112, 243, 0.15) !important;
+    border-color: var(--accent-primary) !important;
+    color: var(--accent-secondary) !important;
+    box-shadow: 0 2px 6px rgba(0, 112, 243, 0.2) !important;
+}
+
+.inlineFileLink code {
+    background: rgba(88, 184, 255, 0.08) !important;
+    border: 1px solid rgba(88, 184, 255, 0.18) !important;
+    color: var(--accent-secondary) !important;
+    padding: 1px 6px !important;
+    border-radius: 4px !important;
+    font-family: var(--font-mono) !important;
+    transition: all var(--transition-fast) !important;
+}
+
+.inlineFileLink:hover code {
+    background: rgba(88, 184, 255, 0.15) !important;
+    border-color: var(--accent-secondary) !important;
+    color: var(--text-primary) !important;
+    box-shadow: 0 2px 6px rgba(88, 184, 255, 0.2) !important;
+}
+
+.fileLink {
+    color: var(--accent-secondary);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.fileLink:hover {
+    color: var(--text-primary);
 }
 
 /* ── Generate with AI button ── */
 .generateAiBtn {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 5px 10px;
+    gap: var(--space-xs);
+    padding: 6px 12px;
     background: transparent;
     border: 1px solid var(--accent-primary);
     border-radius: var(--radius-sm);
     color: var(--accent-primary);
     cursor: pointer;
     font-size: 0.75rem;
-    font-weight: 500;
+    font-weight: 600;
     flex-shrink: 0;
     white-space: nowrap;
-    transition: background 0.15s, color 0.15s;
+    transition: all var(--transition-fast);
 }
 
 .generateAiBtn:hover:not(:disabled) {
     background: var(--accent-primary);
     color: white;
+    box-shadow: 0 0 10px rgba(0, 112, 243, 0.25);
 }
 
 .generateAiBtn:disabled {
@@ -200,18 +309,18 @@
     align-items: flex-start;
     gap: var(--space-sm);
     margin-top: var(--space-lg);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius-sm);
-    background: rgba(99, 102, 241, 0.08);
-    border: 1px solid rgba(99, 102, 241, 0.2);
-    color: var(--text-muted);
-    font-size: 0.82rem;
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    background: rgba(0, 112, 243, 0.04);
+    border: 1px solid rgba(0, 112, 243, 0.15);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
     line-height: 1.5;
 }
 
 .aiUpgrade svg {
     flex-shrink: 0;
-    margin-top: 2px;
+    margin-top: 1px;
     color: var(--accent-primary);
 }
 
@@ -223,12 +332,13 @@
     cursor: pointer;
     font-size: inherit;
     font-family: inherit;
+    font-weight: 600;
     text-decoration: underline;
     text-underline-offset: 2px;
 }
 
 .settingsLink:hover {
-    opacity: 0.8;
+    color: var(--accent-secondary);
 }
 
 /* ── Spinner ── */
