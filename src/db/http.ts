@@ -96,7 +96,7 @@ function createHttpD1Client(
           meta: {
             duration: 0,
             last_row_id: null,
-            changes: null,
+            changes: (results || []).length,
             served_by: 'http-api',
             internal_stats: null,
           },

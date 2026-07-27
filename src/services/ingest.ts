@@ -91,7 +91,7 @@ export async function processRepoIngestion({
 
         if (repoResult.length === 0) {
             const repoId = nanoid(16);
-            repoResult = await db
+            await db
                 .insert(repositories)
                 .values({
                     id: repoId,
@@ -104,8 +104,12 @@ export async function processRepoIngestion({
                     defaultBranch: repoDetails.defaultBranch,
                     lastFetched: now,
                     createdAt: now,
-                })
-                .returning();
+                });
+            repoResult = await db
+                .select()
+                .from(repositories)
+                .where(eq(repositories.id, repoId))
+                .limit(1);
         } else {
             await db
                 .update(repositories)
