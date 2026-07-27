@@ -13,6 +13,9 @@ interface RateLimitResult {
     reset: number;
 }
 
+// In-memory fallback map for environments where KV binding is not present
+const inMemoryRateLimit = new Map<string, number>();
+
 export class RateLimiter {
     private getKv(): PlatformCache | null {
         try {
@@ -42,14 +45,18 @@ export class RateLimiter {
         const windowReset = (windowBucket + 1) * windowMs;
         const rateLimitKey = `ratelimit:${key}:${windowBucket}`;
 
-        // If KV is not available, fail closed in production (deny request)
+        // If KV is not available, use in-memory rate limit map fallback instead of hard-blocking (failing closed)
         if (!kv) {
-            if (shouldFailOpen(process.env.RATE_LIMIT_FAIL_OPEN)) {
-                logger.warn({ key }, 'Rate limiting disabled: KV unavailable, failing open');
-                return { success: true, limit, remaining: limit, reset: windowReset };
+            const currentCount = inMemoryRateLimit.get(rateLimitKey) ?? 0;
+            if (currentCount >= limit) {
+                return { success: false, limit, remaining: 0, reset: windowReset };
             }
-            logger.warn({ key }, 'Rate limiting unavailable: KV not configured, failing closed');
-            return { success: false, limit, remaining: 0, reset: windowReset };
+            inMemoryRateLimit.set(rateLimitKey, currentCount + 1);
+            // Cleanup stale keys
+            if (inMemoryRateLimit.size > 1000) {
+                inMemoryRateLimit.clear();
+            }
+            return { success: true, limit, remaining: Math.max(0, limit - (currentCount + 1)), reset: windowReset };
         }
 
         try {

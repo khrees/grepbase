@@ -14,20 +14,30 @@ export interface APIError {
   details?: unknown;
 }
 
+import { fireToast } from '@/stores/toast-store';
+
 /** Extract a human-readable error message from a structured API response body. */
 function parseErrorMessage(body: Record<string, unknown>, status: number, statusText: string): string {
   const err = body?.error;
+  let message = `HTTP ${status}: ${statusText}`;
 
-  if (typeof err === 'string' && err) return err;
-
-  if (typeof err === 'object' && err !== null) {
+  if (typeof err === 'string' && err) {
+    message = err;
+  } else if (typeof err === 'object' && err !== null) {
     const msg = (err as Record<string, unknown>).message;
-    if (typeof msg === 'string' && msg) return msg;
+    if (typeof msg === 'string' && msg) message = msg;
+  } else if (typeof body?.message === 'string' && body.message) {
+    message = body.message;
   }
 
-  if (typeof body?.message === 'string' && body.message) return body.message;
+  // Intercept Rate Limit errors and display rich toast instructions
+  if (status === 429 || message.toLowerCase().includes('rate limit')) {
+    const instructions = 'Rate limit exceeded. Please wait a minute before retrying, or configure a GitHub Token / Custom API Key in Settings to increase your quota.';
+    fireToast(instructions, 'error', 8000);
+    return instructions;
+  }
 
-  return `HTTP ${status}: ${statusText}`;
+  return message;
 }
 
 export class APIClient {
