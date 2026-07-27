@@ -120,24 +120,29 @@ export async function explainCommit(
             ? '- None (no changed files from this commit are openable in the current UI view)'
             : '- Unknown';
 
-    const systemPrompt = `You are an expert code reviewer guiding developers through a codebase's evolution.
+    const systemPrompt = `You are an expert code analyst helping people understand how a codebase evolved.
 
 Project: ${sanitizePromptInput(project.name, 200)}
 ${project.description ? `Description: ${sanitizePromptInput(project.description, 1000)}` : ''}
 Progress: Commit ${project.currentCommitIndex} of ${project.totalCommits}
 
-Analyze this commit within the context of the repository at this point in time. Explain intent, implementation details, and impact with enough technical depth for an engineer onboarding to the codebase.
+Analyze this commit within the context of the repository at this point in time. Explain intent, implementation details, and impact with enough technical depth for someone studying the codebase.
+
+IMPORTANT: The reader is studying this codebase to understand it — they are NOT a contributor and have no ability to modify the project. Do NOT suggest next steps, action items, improvements, or things to "consider doing". Focus entirely on explaining what was done, why, and how the pieces fit together.
 
 Output requirements:
 - Return plain markdown only.
 - Do not wrap the response in triple backticks.
+- Do NOT use LaTeX notation ($...$ or $$...$$). Use Unicode symbols directly (e.g. →, ←, ×, ≤, ≥, ≠, ∞).
 - Start with a level-1 heading that uses the provided short commit title (no commit SHA in the heading).
 - Use these sections in order:
   1. ## Executive Summary
   2. ## Critical Files
   3. ## Implementation Deep Dive
   4. ## Architecture & Impact
-  5. ## Risks, Gaps, and Next Steps
+  5. ## Observations & Considerations
+- In "Architecture & Impact", include a clean, valid Mermaid diagram (e.g. \`\`\`mermaid\ngraph TD\n...\n\`\`\`) illustrating how the components, data flow, or modules interact at this commit.
+- In "Observations & Considerations", note any interesting patterns, trade-offs the author made, or things that help the reader understand the design thinking — but do NOT frame these as action items or recommendations.
 - In "Critical Files", list 3-8 most important files changed in this commit.
 - Every file in "Critical Files" must use this exact link format:
   - [\`path/to/file.ext\`](file:path/to/file.ext): why this file is important
@@ -190,16 +195,19 @@ export async function explainFile(
 ): Promise<Response> {
     const model = await createAIProviderAsync(providerConfig);
 
-    const systemPrompt = `You are an expert code reviewer helping developers understand a codebase.
+    const systemPrompt = `You are an expert code analyst helping people understand a codebase they are studying.
 
 Project: ${sanitizePromptInput(project.name, 200)}
 ${project.description ? `Description: ${sanitizePromptInput(project.description, 1000)}` : ''}
 
-Explain this code file clearly and concisely. Focus on:
-1. What the file does
+Explain this code file clearly and concisely. The reader is studying this codebase to understand it — they are NOT a contributor. Do NOT suggest improvements, next steps, or action items.
+Do NOT use LaTeX notation. Use Unicode symbols directly (e.g. →, ←, ×, ≤, ≥).
+
+Focus on:
+1. What the file does and its role in the project
 2. Key functions/classes and their purpose
-3. How it might relate to other parts of the project
-4. Any important patterns or concepts used`;
+3. How it relates to other parts of the project
+4. Important patterns, concepts, or design decisions used`;
 
     const userPrompt = `Explain this file:
 
@@ -243,7 +251,8 @@ export async function explainProject(
     const model = await createAIProviderAsync(providerConfig);
 
     const systemPrompt = `You are an expert at explaining software projects to newcomers.
-Help developers understand what this project does and how to start contributing.`;
+Help people understand what this project does and how it works. The reader is studying this codebase — they are NOT a contributor and have no ability to modify the project. Do NOT suggest contributing, making changes, or next steps.
+Do NOT use LaTeX notation. Use Unicode symbols directly (e.g. →, ←, ×, ≤, ≥).`;
 
     const userPrompt = `Give me a beginner-friendly overview of this project:
 
@@ -256,8 +265,8 @@ ${project.readme ? `**README:**\n${sanitizePromptInput(project.readme, 5000)}` :
 Please explain:
 1. What this project does (in simple terms)
 2. The main technologies/concepts used
-3. Good starting points for understanding the codebase
-4. Tips for making your first contribution`;
+3. How the codebase is structured and where the key logic lives
+4. Important design decisions or architectural patterns worth noting`;
 
     const cacheKey = `explain:project:${project.name}:${await sha256(project.readme || '')}:${await sha256(systemPrompt + userPrompt + (providerConfig.model || 'default'))}`;
 
@@ -313,6 +322,7 @@ export async function explainStory(
  
     Output requirements:
     - Return markdown only, no code fences wrapping the full output.
+    - Do NOT use LaTeX notation ($...$ or $$...$$). Use Unicode symbols directly (e.g. →, ←, ×, ≤, ≥).
     - Start with a single H1 title for this chapter.
     - Organize the timeline using structured H2 and H3 headings representing key themes or phases in these commits.
     - Include a beautifully structured, valid Mermaid diagram (e.g. graph TD, sequenceDiagram, etc.) inside a \`\`\`mermaid block that visually illustrates the structural or data-flow changes introduced during this chapter.
@@ -426,8 +436,11 @@ Do not process the request. Politely explain that you cannot comply with request
     const explorationGuidance = getExplorationGuidance(question);
 
     // Build system prompt with exploration guidance when needed
-    const baseSystemPrompt = `You are a helpful assistant explaining code to developers learning a new codebase.
-Answer questions clearly and concisely using the provided context.
+    const baseSystemPrompt = `You are a helpful technical assistant explaining and analyzing code for someone studying a codebase.
+Answer questions thoroughly and objectively using the provided context.
+If asked about potential issues, bugs, architectural smells, security risks, or trade-offs in the codebase, provide a helpful and direct technical analysis.
+Do NOT refuse to answer questions about code quality or issues. (However, do not give pushy unsolicited todo lists or dictate next steps unless explicitly requested).
+Do NOT use LaTeX notation. Use Unicode symbols directly (e.g. →, ←, ×, ≤, ≥).
 
 When referencing a repository file, format it as [\`path/to/file.ext\`](file:path/to/file.ext) so the UI can open it.
 Only reference files from the "Visible Files (openable in UI)" list when that list is provided.

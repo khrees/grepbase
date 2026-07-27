@@ -9,6 +9,7 @@ import styles from './AIPanel.module.css';
 import { getAISettings, getAutoExplainEnabled } from '@/stores/settings-store';
 import { api } from '@/lib/api-client';
 
+import Mermaid from './Mermaid';
 import type { Repository, Commit } from '@/types';
 
 interface AIPanelProps {
@@ -53,21 +54,110 @@ function restoreMessagesFromStorage(storageKey: string): Message[] {
     }
 }
 
-function normalizeAssistantMarkdown(content: string): string {
-    const trimmed = content.trim();
+// Common LaTeX symbols → Unicode replacements
+const LATEX_TO_UNICODE: [RegExp, string][] = [
+    // Arrows
+    [/\\leftarrow/gi, '←'],
+    [/\\rightarrow/gi, '→'],
+    [/\\leftrightarrow/gi, '↔'],
+    [/\\Leftarrow/g, '⇐'],
+    [/\\Rightarrow/g, '⇒'],
+    [/\\Leftrightarrow/g, '⇔'],
+    [/\\uparrow/gi, '↑'],
+    [/\\downarrow/gi, '↓'],
+    [/\\longrightarrow/gi, '→'],
+    [/\\longleftarrow/gi, '←'],
+    [/\\mapsto/gi, '↦'],
+    // Math operators
+    [/\\times/gi, '×'],
+    [/\\div/gi, '÷'],
+    [/\\pm/gi, '±'],
+    [/\\mp/gi, '∓'],
+    [/\\cdot/gi, '·'],
+    [/\\star/gi, '⋆'],
+    [/\\circ/gi, '∘'],
+    // Comparisons
+    [/\\neq/gi, '≠'],
+    [/\\leq/gi, '≤'],
+    [/\\geq/gi, '≥'],
+    [/\\approx/gi, '≈'],
+    [/\\equiv/gi, '≡'],
+    [/\\sim/gi, '∼'],
+    // Sets & logic
+    [/\\infty/gi, '∞'],
+    [/\\sum/gi, 'Σ'],
+    [/\\prod/gi, 'Π'],
+    [/\\forall/gi, '∀'],
+    [/\\exists/gi, '∃'],
+    [/\\in(?![a-z])/gi, '∈'],
+    [/\\notin/gi, '∉'],
+    [/\\subset/gi, '⊂'],
+    [/\\supset/gi, '⊃'],
+    [/\\cup/gi, '∪'],
+    [/\\cap/gi, '∩'],
+    [/\\emptyset/gi, '∅'],
+    [/\\land/gi, '∧'],
+    [/\\lor/gi, '∨'],
+    [/\\neg/gi, '¬'],
+    // Greek letters (common ones in code docs)
+    [/\\alpha/gi, 'α'],
+    [/\\beta/gi, 'β'],
+    [/\\gamma/gi, 'γ'],
+    [/\\delta/gi, 'δ'],
+    [/\\epsilon/gi, 'ε'],
+    [/\\lambda/gi, 'λ'],
+    [/\\mu/gi, 'μ'],
+    [/\\pi/gi, 'π'],
+    [/\\sigma/gi, 'σ'],
+    [/\\theta/gi, 'θ'],
+    [/\\omega/gi, 'ω'],
+    // Misc
+    [/\\ldots/gi, '…'],
+    [/\\cdots/gi, '⋯'],
+    [/\\checkmark/gi, '✓'],
+    [/\\dagger/gi, '†'],
+];
 
-    const fencedMarkdown = trimmed.match(/^```[ \t]*(markdown|md|mdx)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
+/**
+ * Strip LaTeX math delimiters ($...$, $$...$$) and convert LaTeX
+ * symbol commands to their Unicode equivalents.
+ */
+function stripLatex(content: string): string {
+    // Replace $$...$$ (display math) and $...$ (inline math) blocks,
+    // converting any LaTeX commands inside them to Unicode.
+    return content.replace(/\$\$([^$]+?)\$\$|\$([^$]+?)\$/g, (_match, display, inline) => {
+        let inner: string = (display ?? inline).trim();
+        for (const [pattern, replacement] of LATEX_TO_UNICODE) {
+            inner = inner.replace(pattern, replacement);
+        }
+        // Remove remaining backslash-commands that we didn't map (e.g. \text{...})
+        inner = inner.replace(/\\text\{([^}]*)}/g, '$1');
+        inner = inner.replace(/\\mathrm\{([^}]*)}/g, '$1');
+        inner = inner.replace(/\\mathbf\{([^}]*)}/g, '**$1**');
+        inner = inner.replace(/\\textbf\{([^}]*)}/g, '**$1**');
+        inner = inner.replace(/\{([^}]*)}/g, '$1'); // strip remaining braces
+        return inner;
+    });
+}
+
+function normalizeAssistantMarkdown(content: string): string {
+    let text = content.trim();
+
+    const fencedMarkdown = text.match(/^```[ \t]*(markdown|md|mdx)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
     if (fencedMarkdown) {
         const language = fencedMarkdown[1]?.toLowerCase();
         const inner = fencedMarkdown[2].trim();
         const looksLikeMarkdown = /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>)/.test(inner);
 
         if (language || looksLikeMarkdown) {
-            return inner;
+            text = inner;
         }
     }
 
-    return content;
+    // Convert any LaTeX notation to Unicode
+    text = stripLatex(text);
+
+    return text;
 }
 
 function looksLikeRepositoryFilePath(value: string): boolean {
@@ -149,10 +239,29 @@ async function streamResponseText(response: Response, onChunk: (chunk: string) =
     }
 }
 
+const THINKING_VERBS = [
+    'Ideating...',
+    'Tinkering...',
+    'Analyzing diffs...',
+    'Connecting dots...',
+    'Examining structure...',
+    'Synthesizing overview...',
+    'Exploring codebase...',
+    'Formulating explanation...',
+    'Mapping relationships...',
+    'Unraveling commits...',
+];
+
+function getRandomThinkingVerb(currentVerb?: string): string {
+    const choices = THINKING_VERBS.filter(v => v !== currentVerb);
+    return choices[Math.floor(Math.random() * choices.length)];
+}
+
 export default function AIPanel({ repository, commit, onOpenFile, visibleFilePaths, onOpenSettings }: AIPanelProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [loadingVerb, setLoadingVerb] = useState('Ideating...');
     const [error, setError] = useState<string | null>(null);
     const [streaming, setStreaming] = useState(false);
     const [elapsedTime, setElapsedTime] = useState(0);
@@ -200,13 +309,18 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         abortControllerRef.current = abortController;
 
         setLoading(true);
+        setLoadingVerb(getRandomThinkingVerb());
         setError(null);
         setMessages([]);
         setElapsedTime(0);
 
         const startTime = Date.now();
         timerRef.current = setInterval(() => {
-            setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            setElapsedTime(elapsed);
+            if (elapsed > 0 && elapsed % 3 === 0) {
+                setLoadingVerb(prev => getRandomThinkingVerb(prev));
+            }
         }, 1000);
 
         try {
@@ -276,7 +390,8 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         if (getAutoExplainEnabled()) {
             explainCommit();
         }
-    }, [chatStorageKey, commit.sha, explainCommit]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chatStorageKey, commit.sha]);
 
     // Persist chat by commit — persist to sessionStorage on changes
     useEffect(() => {
@@ -298,7 +413,10 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
     useEffect(() => {
         if (inputRef.current) {
             inputRef.current.style.height = 'auto';
-            inputRef.current.style.height = `${Math.min(150, inputRef.current.scrollHeight)}px`;
+            const scrollHeight = inputRef.current.scrollHeight;
+            const maxHeight = 150;
+            inputRef.current.style.height = `${Math.min(maxHeight, scrollHeight)}px`;
+            inputRef.current.style.overflowY = scrollHeight > maxHeight ? 'auto' : 'hidden';
         }
     }, [input]);
 
@@ -323,7 +441,18 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         setInput('');
         setMessages(prev => [...prev, { role: 'user', content: question }]);
         setLoading(true);
+        setLoadingVerb(getRandomThinkingVerb());
         setError(null);
+        setElapsedTime(0);
+
+        const startTime = Date.now();
+        timerRef.current = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            setElapsedTime(elapsed);
+            if (elapsed > 0 && elapsed % 3 === 0) {
+                setLoadingVerb(prev => getRandomThinkingVerb(prev));
+            }
+        }, 1000);
 
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -393,7 +522,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
         <div className={styles.container}>
             <div className={styles.header}>
                 <Sparkles size={18} />
-                <span>AI Assistant</span>
+                <span>AI Chat</span>
             </div>
 
             <div className={styles.content}>
@@ -460,18 +589,18 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
 
                                                         if (fileReference && onOpenFile && canOpenFileReference(fileReference)) {
                                                             return (
-                                                                <a
-                                                                    {...props}
-                                                                    href={href}
+                                                                <button
+                                                                    type="button"
                                                                     className={styles.fileLink}
                                                                     onClick={event => {
                                                                         event.preventDefault();
+                                                                        event.stopPropagation();
                                                                         onOpenFile(fileReference);
                                                                     }}
                                                                     title={`Open ${fileReference}`}
                                                                 >
                                                                     {children}
-                                                                </a>
+                                                                </button>
                                                             );
                                                         }
 
@@ -485,6 +614,11 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                                                                 href={href}
                                                                 target={isExternal ? '_blank' : undefined}
                                                                 rel={isExternal ? 'noreferrer noopener' : undefined}
+                                                                onClick={event => {
+                                                                    if (!isExternal) {
+                                                                        event.preventDefault();
+                                                                    }
+                                                                }}
                                                             >
                                                                 {children}
                                                             </a>
@@ -495,6 +629,13 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                                                             ? children.map(child => String(child)).join('')
                                                             : String(children ?? '');
                                                         const cleanText = text.trim();
+                                                        const match = /language-(\w+)/.exec(className || '');
+                                                        const language = match ? match[1] : '';
+
+                                                        if (language === 'mermaid') {
+                                                            return <Mermaid chart={cleanText} />;
+                                                        }
+
                                                         const isCodeBlock = Boolean(className) || cleanText.includes('\n');
                                                         const fileReference = !isCodeBlock
                                                             ? normalizeFileReference(cleanText)
@@ -540,7 +681,7 @@ export default function AIPanel({ repository, commit, onOpenFile, visibleFilePat
                 {loading && !streaming && (
                     <div className={styles.loading}>
                         <Loader2 size={20} className={styles.spinner} />
-                        <span>Generating...</span>
+                        <span>{loadingVerb}</span>
                         {elapsedTime > 0 && (
                             <span className={styles.timer}>
                                 <Clock size={12} />
