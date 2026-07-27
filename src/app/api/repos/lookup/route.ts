@@ -29,19 +29,47 @@ export async function GET(request: NextRequest) {
         const url = new URL(request.url);
         const owner = url.searchParams.get('owner')?.trim();
         const repoName = url.searchParams.get('repo')?.trim();
+        const branch = url.searchParams.get('branch')?.trim();
 
         if (!owner || !repoName) {
             return NextResponse.json({ error: 'Missing owner or repo parameter' }, { status: 400 });
         }
 
         // Query repository in DB
-        const repo = await db.select()
-            .from(repositories)
-            .where(and(
-                eq(repositories.owner, owner),
-                eq(repositories.name, repoName)
-            ))
-            .limit(1);
+        // Non-default branches are stored with URL format: https://github.com/owner/repo@branch
+        // When a branch is specified, look up by exact URL to find the correct entry
+        let repo;
+        if (branch) {
+            const branchUrl = `https://github.com/${owner}/${repoName}@${branch}`;
+            repo = await db.select()
+                .from(repositories)
+                .where(eq(repositories.url, branchUrl))
+                .limit(1);
+        }
+
+        // Fall back to owner+name lookup (for default branch or if branch URL not found)
+        if (!repo || repo.length === 0) {
+            const baseUrl = `https://github.com/${owner}/${repoName}`;
+            repo = await db.select()
+                .from(repositories)
+                .where(and(
+                    eq(repositories.owner, owner),
+                    eq(repositories.name, repoName),
+                    eq(repositories.url, baseUrl)
+                ))
+                .limit(1);
+        }
+
+        // Final fallback: just owner+name (legacy entries)
+        if (repo.length === 0) {
+            repo = await db.select()
+                .from(repositories)
+                .where(and(
+                    eq(repositories.owner, owner),
+                    eq(repositories.name, repoName)
+                ))
+                .limit(1);
+        }
 
         if (repo.length === 0) {
             return NextResponse.json({ error: 'Repository not found' }, { status: 404 });

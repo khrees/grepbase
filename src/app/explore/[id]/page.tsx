@@ -23,7 +23,11 @@ export default function ExploreRedirectPage({ params }: { params: Promise<{ id: 
 
     useEffect(() => {
         if (data?.repository) {
-            router.replace(`/explore/${data.repository.owner}/${data.repository.name}`);
+            // Preserve query parameters (e.g., jobId, branch, sha) during redirect
+            const params = new URLSearchParams(window.location.search);
+            const queryString = params.toString();
+            const suffix = queryString ? `?${queryString}` : '';
+            router.replace(`/explore/${data.repository.owner}/${data.repository.name}${suffix}`);
         }
     }, [data, router]);
 

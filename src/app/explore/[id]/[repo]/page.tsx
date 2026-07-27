@@ -2,6 +2,7 @@
 
 import { useState, use, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     BookOpen,
     ChevronLeft,
@@ -177,11 +178,15 @@ function useAutoSelectFile(
 
 export default function ExplorePage({ params }: { params: Promise<{ id: string; repo: string }> }) {
     const { id: owner, repo } = use(params);
-    const repoQuery = useRepoByName(owner, repo);
-    const id = repoQuery.data?.id;
     const router = useRouter();
     const searchParams = useSearchParams();
-    const ingestJobId = searchParams.get('jobId');
+    const urlBranch = searchParams.get('branch');
+    const repoQuery = useRepoByName(owner, repo, urlBranch);
+    const id = repoQuery.data?.id;
+    const urlIngestJobId = searchParams.get('jobId');
+    // Use the auto-triggered ingest job ID if no URL-based one
+    const ingestJobId = urlIngestJobId || repoQuery.ingestJobId;
+    const queryClient = useQueryClient();
 
     const leftPanelRef = usePanelRef();
     const aiPanelRef = usePanelRef();
@@ -263,8 +268,14 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
         const hasProcessed = Number(ingestJobData.processedCommits || 0) > 0;
         const shouldRefetch = (ingestJobData.repository || ingestJobData.repoId) &&
             (ingestJobData.ready || hasProcessed || ingestJobData.status === 'completed');
-        if (shouldRefetch) refetchCommits();
-    }, [ingestJobData, refetchCommits]);
+        if (shouldRefetch) {
+            refetchCommits();
+            // Also refetch repo lookup when auto-triggered ingestion completes
+            if (repoQuery.ingestJobId) {
+                queryClient.invalidateQueries({ queryKey: ['repo-by-name', owner, repo, urlBranch || null] });
+            }
+        }
+    }, [ingestJobData, refetchCommits, repoQuery.ingestJobId, owner, repo, queryClient]);
 
     // ── Resync job polling ────────────────────────────────────
     const resyncJob = useIngestJob(resyncJobId, { enabled: !!resyncJobId });
@@ -285,6 +296,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     }, [resyncJob.data, resyncJobId, refetchCommits]);
 
     // ── Branch-switch job polling ─────────────────────────────
+    const [pendingSwitchBranch, setPendingSwitchBranch] = useState<string | null>(null);
     const switchBranchJob = useIngestJob(switchBranchJobId, { enabled: !!switchBranchJobId });
     useEffect(() => {
         if (!switchBranchJobId || !switchBranchJob.data) return;
@@ -292,13 +304,18 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
         const resolvedId = job.repository?.id ?? job.repoId;
         if (resolvedId) {
             setSwitchBranchJobId(null);
-            router.push(`/explore/${resolvedId}?jobId=${switchBranchJobId}`);
+            // Navigate directly to /explore/owner/repo?branch=X&jobId=Y
+            // so the page resolves the correct branch entry
+            const branchParam = pendingSwitchBranch ? `branch=${encodeURIComponent(pendingSwitchBranch)}&` : '';
+            router.push(`/explore/${owner}/${repo}?${branchParam}jobId=${switchBranchJobId}`);
+            setPendingSwitchBranch(null);
         } else if (job.status === 'failed') {
             fireToast('Failed to load branch', 'error');
             setSwitchingBranch(false);
             setSwitchBranchJobId(null);
+            setPendingSwitchBranch(null);
         }
-    }, [switchBranchJob.data, switchBranchJobId, router]);
+    }, [switchBranchJob.data, switchBranchJobId, router, owner, repo, pendingSwitchBranch]);
 
     // ── Derived state ────────────────────────────────────────
     const currentCommit = commits[currentIndex];
@@ -490,8 +507,12 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
             }>('/api/repos', body);
 
             const targetId = data.repository?.id;
+            // Build the target URL with branch param for non-default branches
+            const branchParam = isDefault ? '' : `?branch=${encodeURIComponent(branch)}`;
+
             if (targetId) {
                 if (data.jobId) {
+                    setPendingSwitchBranch(isDefault ? null : branch);
                     setSwitchBranchJobId(data.jobId);
                 } else if (targetId === id) {
                     // Same repo, same branch record — refetch in place
@@ -499,9 +520,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
                     setSwitchingBranch(false);
                     fireToast(`Switched to ${branch}`, 'success');
                 } else {
-                    router.push(`/explore/${targetId}`);
+                    // Navigate to the explore page with branch context
+                    router.push(`/explore/${owner}/${repo}${branchParam}`);
                 }
             } else if (data.jobId) {
+                setPendingSwitchBranch(isDefault ? null : branch);
                 setSwitchBranchJobId(data.jobId);
             } else {
                 setSwitchingBranch(false);
@@ -510,7 +533,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
             fireToast(err instanceof Error ? err.message : 'Failed to switch branch', 'error');
             setSwitchingBranch(false);
         }
-    }, [activeBranch, baseRepoUrl, id, repository, router, refetchCommits, setShowBranchMenu, switchingBranch]);
+    }, [activeBranch, baseRepoUrl, id, owner, repo, repository, router, refetchCommits, setShowBranchMenu, switchingBranch]);
 
     // ── Resync ───────────────────────────────────────────────
     const handleResync = useCallback(async () => {
@@ -536,11 +559,11 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     // ──────────────────────────────────────────────────────────
     // Render
     // ──────────────────────────────────────────────────────────
-    if (repoQuery.isLoading || commitsQuery.isLoading) {
+    if (repoQuery.isLoading || repoQuery.isAutoIngesting) {
         return (
             <div className={styles.loadingState}>
                 <Loader2 size={32} className={styles.spinner} />
-                <p>Loading repository...</p>
+                <p>{repoQuery.isAutoIngesting ? 'Fetching repository...' : 'Loading repository...'}</p>
             </div>
         );
     }
@@ -560,7 +583,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     if (!repoQuery.data) {
         return (
             <div className={styles.errorState}>
-                <p>Repository not found in database. Please index it first.</p>
+                <p>Repository not found. It may be private or nonexistent.</p>
                 <button className="btn btn-primary" onClick={() => router.push('/')}>
                     Go Home
                 </button>
