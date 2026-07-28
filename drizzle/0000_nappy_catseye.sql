@@ -1,3 +1,5 @@
+PRAGMA foreign_keys=OFF;
+--> statement-breakpoint
 CREATE TABLE `analyses` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`commit_id` integer NOT NULL,
@@ -7,7 +9,8 @@ CREATE TABLE `analyses` (
 	FOREIGN KEY (`commit_id`) REFERENCES `commits`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `idx_analyses_commit_id` ON `analyses` (`commit_id`);--> statement-breakpoint
+CREATE INDEX `idx_analyses_commit_id` ON `analyses` (`commit_id`);
+--> statement-breakpoint
 CREATE TABLE `commits` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`repo_id` text NOT NULL,
@@ -20,9 +23,12 @@ CREATE TABLE `commits` (
 	FOREIGN KEY (`repo_id`) REFERENCES `repositories`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `commits_repo_sha_unique` ON `commits` (`repo_id`,`sha`);--> statement-breakpoint
-CREATE INDEX `idx_commits_repo_id` ON `commits` (`repo_id`);--> statement-breakpoint
-CREATE INDEX `idx_commits_sha` ON `commits` (`sha`);--> statement-breakpoint
+CREATE UNIQUE INDEX `commits_repo_sha_unique` ON `commits` (`repo_id`,`sha`);
+--> statement-breakpoint
+CREATE INDEX `idx_commits_repo_id` ON `commits` (`repo_id`);
+--> statement-breakpoint
+CREATE INDEX `idx_commits_sha` ON `commits` (`sha`);
+--> statement-breakpoint
 CREATE TABLE `files` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`commit_id` integer NOT NULL,
@@ -33,8 +39,10 @@ CREATE TABLE `files` (
 	FOREIGN KEY (`commit_id`) REFERENCES `commits`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `idx_files_commit_path` ON `files` (`commit_id`,`path`);--> statement-breakpoint
-CREATE INDEX `idx_files_commit_id` ON `files` (`commit_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_files_commit_path` ON `files` (`commit_id`,`path`);
+--> statement-breakpoint
+CREATE INDEX `idx_files_commit_id` ON `files` (`commit_id`);
+--> statement-breakpoint
 CREATE TABLE `ingest_jobs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`job_id` text NOT NULL,
@@ -55,10 +63,14 @@ CREATE TABLE `ingest_jobs` (
 	FOREIGN KEY (`repo_id`) REFERENCES `repositories`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `ingest_jobs_job_id_unique` ON `ingest_jobs` (`job_id`);--> statement-breakpoint
-CREATE INDEX `idx_jobs_job_id` ON `ingest_jobs` (`job_id`);--> statement-breakpoint
-CREATE INDEX `idx_jobs_status` ON `ingest_jobs` (`status`);--> statement-breakpoint
-CREATE INDEX `idx_jobs_retry` ON `ingest_jobs` (`status`,`last_retry_at`,`retry_count`);--> statement-breakpoint
+CREATE UNIQUE INDEX `ingest_jobs_job_id_unique` ON `ingest_jobs` (`job_id`);
+--> statement-breakpoint
+CREATE INDEX `idx_jobs_job_id` ON `ingest_jobs` (`job_id`);
+--> statement-breakpoint
+CREATE INDEX `idx_jobs_status` ON `ingest_jobs` (`status`);
+--> statement-breakpoint
+CREATE INDEX `idx_jobs_retry` ON `ingest_jobs` (`status`,`last_retry_at`,`retry_count`);
+--> statement-breakpoint
 CREATE TABLE `repositories` (
 	`id` text PRIMARY KEY NOT NULL,
 	`url` text NOT NULL,
@@ -69,8 +81,16 @@ CREATE TABLE `repositories` (
 	`default_branch` text DEFAULT 'main',
 	`readme` text,
 	`last_fetched` integer NOT NULL,
-	`created_at` integer NOT NULL
+	`created_at` integer NOT NULL,
+	`last_ingested_sha` text,
+	`last_seen_head_sha` text,
+	`last_fetch_at` integer,
+	`fetch_interval_minutes` integer DEFAULT 60,
+	`last_ingest_error` text
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `repositories_url_unique` ON `repositories` (`url`);--> statement-breakpoint
+CREATE UNIQUE INDEX `repositories_url_unique` ON `repositories` (`url`);
+--> statement-breakpoint
 CREATE INDEX `idx_repos_owner_name` ON `repositories` (`owner`,`name`);
+--> statement-breakpoint
+PRAGMA foreign_keys=ON;

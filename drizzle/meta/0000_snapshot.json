@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "cefce261-ebfa-4f47-aed9-acf959d37836",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "ed971175-07b3-4bd3-8d21-d0bf50d32555",
+  "prevId": "f7105134-6c5b-40c7-bf3b-0476c09d7f7c",
   "tables": {
     "analyses": {
       "name": "analyses",
@@ -503,6 +503,42 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "last_ingested_sha": {
+          "name": "last_ingested_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_seen_head_sha": {
+          "name": "last_seen_head_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_fetch_at": {
+          "name": "last_fetch_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "fetch_interval_minutes": {
+          "name": "fetch_interval_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 60
+        },
+        "last_ingest_error": {
+          "name": "last_ingest_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },

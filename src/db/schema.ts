@@ -12,6 +12,11 @@ export const repositories = sqliteTable('repositories', {
     readme: text('readme'),
     lastFetched: integer('last_fetched', { mode: 'timestamp' }).notNull(),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+    lastIngestedSha: text('last_ingested_sha'),
+    lastSeenHeadSha: text('last_seen_head_sha'),
+    lastFetchAt: integer('last_fetch_at', { mode: 'timestamp' }),
+    fetchIntervalMinutes: integer('fetch_interval_minutes').default(60),
+    lastIngestError: text('last_ingest_error'),
 }, (table) => [
     index('idx_repos_owner_name').on(table.owner, table.name),
 ]);
