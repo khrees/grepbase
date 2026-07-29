@@ -66,9 +66,13 @@ export const INGEST = {
   MASSIVE_REPO_SIZE_KB: 100_000,
   LATEST_COMMITS_TO_PREFETCH_DEFAULT: 1,
   FILE_BATCH_INSERT_SIZE: 500,
-  COMMIT_BATCH_SIZE: 10,
+  get COMMIT_BATCH_SIZE(): number {
+    return Number(process.env.COMMIT_BATCH_SIZE) || 10;
+  },
   FILE_BATCH_DELAY_MS: 100,
-} as const;
+  GITHUB_MAX_FETCH_RETRIES: 3,
+  GITHUB_RETRY_BASE_DELAY_MS: 1000,
+};
 
 // Resource access settings
 export const RESOURCE_ACCESS = {
