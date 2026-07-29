@@ -321,8 +321,14 @@ export async function processRepoIngestion({
 
         processLogger.info('Repository ingestion completed successfully');
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorCause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
+        const fullError = errorCause
+            ? `${errorMessage}\ncause: ${String(errorCause)}`
+            : errorMessage;
+
         processLogger.error(
-            { error, errorMessage: error instanceof Error ? error.message : 'Unknown error' },
+            { error, errorMessage, errorCause },
             'Repository ingestion failed'
         );
 
@@ -331,7 +337,7 @@ export async function processRepoIngestion({
             await db.update(ingestJobs)
                 .set({
                     status: 'failed',
-                    error: error instanceof Error ? error.message : 'Unknown error',
+                    error: fullError,
                     updatedAt: new Date(),
                 })
                 .where(eq(ingestJobs.jobId, jobId));
