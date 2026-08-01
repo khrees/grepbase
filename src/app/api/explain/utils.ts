@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { files } from '@/db';
 import { shouldFetchFileContent } from '@/lib/file-utils';
 import { normalizeProviderBaseUrl } from '@/lib/network-security';
@@ -39,16 +39,16 @@ export async function resolveAvailableFilePathsForCommit(
     const commitFiles = await db.select({
         path: files.path,
         size: files.size,
-        content: files.content,
+        hasContent: sql<boolean>`${files.content} IS NOT NULL`,
     })
         .from(files)
         .where(eq(files.commitId, commitId));
 
     return commitFiles
-        .filter((file: { path: string; size: number | null; content: string | null }) =>
-            isOpenableFilePath(file.path, Number(file.size || 0), Boolean(file.content))
+        .filter((file) =>
+            isOpenableFilePath(file.path, Number(file.size || 0), Boolean(file.hasContent))
         )
-        .map((file: { path: string }) => normalizePath(file.path));
+        .map((file) => normalizePath(file.path));
 }
 
 export async function resolveProviderConfigFromRequest(

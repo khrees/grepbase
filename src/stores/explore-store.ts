@@ -42,6 +42,7 @@ interface ExploreState {
 
   /** Reset transient state (for when navigating away from explore) */
   reset: () => void;
+  hydrate: () => void;
 }
 
 const DIFF_VIEW_MODE_KEY = 'grepbase:diff_view_mode';
@@ -59,7 +60,7 @@ const initialState = {
   sidebarTab: 'files' as 'commits' | 'files',
   commitOrder: 'asc' as 'asc' | 'desc',
   diffScope: 'commit' as DiffScope,
-  diffViewMode: getStoredDiffViewMode(),
+  diffViewMode: 'unified' as 'unified' | 'split',
   focusMode: false,
   aiPanelExpanded: true,
   showSettings: false,
@@ -109,6 +110,9 @@ export const useExploreStore = create<ExploreState>((set) => ({
 
   reset: () => set({
     ...initialState,
+    diffViewMode: getStoredDiffViewMode(),
+  }),
+  hydrate: () => set({
     diffViewMode: getStoredDiffViewMode(),
   }),
 }));

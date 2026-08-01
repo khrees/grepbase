@@ -54,6 +54,9 @@ export async function POST(request: NextRequest) {
         };
 
         const commit = await db.select().from(commits).where(and(eq(commits.repoId, repoId), eq(commits.sha, commitSha))).limit(1);
+        if (commit.length === 0) {
+            return NextResponse.json({ error: 'Commit not found' }, { status: 404 });
+        }
         const githubToken = await getStoredGithubToken(session.sessionId);
         const diff = await fetchCommitDiff(repo[0].owner, repo[0].name, commitSha, githubToken ?? undefined);
         const availableFiles = await resolveAvailableFilePathsForCommit(db, commit[0].id, visibleFiles);

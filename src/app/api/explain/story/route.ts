@@ -13,6 +13,16 @@ import { getStoredGithubToken } from '@/services/ai-credentials';
 import { fetchCommitFileDiffs } from '@/services/github';
 import { resolveProviderConfigFromRequest } from '../utils';
 
+async function processInBatches<T, R>(items: T[], batchSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const results: R[] = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchResults = await Promise.all(batch.map(fn));
+        results.push(...batchResults);
+    }
+    return results;
+}
+
 export async function POST(request: NextRequest) {
     const requestLogger = logger.child({ endpoint: 'POST /api/explain/story' });
     const startTime = Date.now();
@@ -73,31 +83,29 @@ export async function POST(request: NextRequest) {
         const githubToken = await getStoredGithubToken(session.sessionId);
 
         // Fetch changed files in parallel for all selected commits
-        const commitsWithFiles = await Promise.all(
-            selectedCommits.map(async (commit) => {
-                let changedFiles: string[] = [];
-                try {
-                    const diffs = await fetchCommitFileDiffs(
-                        repo[0].owner,
-                        repo[0].name,
-                        commit.sha,
-                        githubToken ?? undefined
-                    );
-                    changedFiles = diffs.map(
-                        (f) => `${f.status === 'added' ? '+' : f.status === 'removed' ? '-' : 'M'} ${f.path} (+${f.additions} -${f.deletions})`
-                    );
-                } catch (err) {
-                    requestLogger.warn({ sha: commit.sha, err }, 'Failed to fetch changed files for commit in story');
-                }
-                return {
-                    sha: commit.sha,
-                    message: commit.message,
-                    authorName: commit.authorName,
-                    date: commit.date,
-                    changedFiles,
-                };
-            })
-        );
+        const commitsWithFiles = await processInBatches(selectedCommits, 5, async (commit) => {
+            let changedFiles: string[] = [];
+            try {
+                const diffs = await fetchCommitFileDiffs(
+                    repo[0].owner,
+                    repo[0].name,
+                    commit.sha,
+                    githubToken ?? undefined
+                );
+                changedFiles = diffs.map(
+                    (f) => `${f.status === 'added' ? '+' : f.status === 'removed' ? '-' : 'M'} ${f.path} (+${f.additions} -${f.deletions})`
+                );
+            } catch (err) {
+                requestLogger.warn({ sha: commit.sha, err }, 'Failed to fetch changed files for commit in story');
+            }
+            return {
+                sha: commit.sha,
+                message: commit.message,
+                authorName: commit.authorName,
+                date: commit.date,
+                changedFiles,
+            };
+        });
 
         const response = await explainStory(
             commitsWithFiles,

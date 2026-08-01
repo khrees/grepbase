@@ -52,13 +52,19 @@ export class RateLimiter {
                 return { success: false, limit, remaining: 0, reset: windowReset };
             }
             inMemoryRateLimit.set(rateLimitKey, currentCount + 1);
-            // Cleanup stale keys
+            // Evict oldest entries instead of clearing everything
             if (inMemoryRateLimit.size > 1000) {
-                inMemoryRateLimit.clear();
+                const keysToDelete = Array.from(inMemoryRateLimit.keys()).slice(0, 500);
+                for (const key of keysToDelete) {
+                    inMemoryRateLimit.delete(key);
+                }
             }
             return { success: true, limit, remaining: Math.max(0, limit - (currentCount + 1)), reset: windowReset };
         }
 
+        // Note: KV get-then-set has a small TOCTOU window under concurrent requests.
+        // Cloudflare KV does not support atomic increment. This is acceptable for
+        // non-critical rate limiting — the worst case is a small burst above the limit.
         try {
             const data = await kv.get<number>(rateLimitKey);
             const currentCount = typeof data === 'number' && Number.isFinite(data) ? data : 0;

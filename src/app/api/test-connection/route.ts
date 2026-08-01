@@ -113,10 +113,10 @@ async function fetchModels(provider: AIProviderType, baseUrl?: string, apiKey?: 
         }
 
         case 'gemini': {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(
-                String(resolvedApiKey || '')
-            )}`;
-            const data = await fetchJson(url);
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models';
+            const data = await fetchJson(url, {
+                headers: { 'x-goog-api-key': String(resolvedApiKey || '') },
+            });
             if (!Array.isArray(data.models)) return [];
 
             const generativeModels = (data.models as GeminiModelEntry[])

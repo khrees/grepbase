@@ -92,7 +92,13 @@ export default function CommitHistoryModal({
 
     return (
         <div className={styles.overlay} onClick={onClose}>
-            <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <div 
+                className={styles.modal} 
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Commit history"
+            >
                 <div className={styles.header}>
                     <h2>
                         <Clock size={24} />

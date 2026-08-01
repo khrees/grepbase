@@ -125,7 +125,7 @@ describe('RateLimiter', () => {
 
             const result = await limiter.checkLimit('client-c', 5, 60);
             expect(result.success).toBe(true);
-            expect(result.remaining).toBe(5);
+            expect(result.remaining).toBe(4);
         });
     });
 });

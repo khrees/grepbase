@@ -61,11 +61,9 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
     const { data: jobData } = useIngestJob(jobId, { enabled: fetchingRepo && !!jobId });
 
     // Load settings once
-    const settingsLoadedRef = useRef(false);
-    if (!settingsLoadedRef.current) {
-        settingsLoadedRef.current = true;
+    useEffect(() => {
         loadFromStorage();
-    }
+    }, [loadFromStorage]);
 
 
     // Start background repo fetch immediately
@@ -106,10 +104,12 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         fetchRepo();
     }, [repoUrl]);
 
-    // React to ingest job polling results — render-phase
+    // React to ingest job polling results
     const lastJobStatusRef = useRef<string | null>(null);
-    const jobStatus = jobData?.status ?? null;
-    if (jobData && jobStatus !== lastJobStatusRef.current) {
+    useEffect(() => {
+        const jobStatus = jobData?.status ?? null;
+        if (!jobData || jobStatus === lastJobStatusRef.current) return;
+
         lastJobStatusRef.current = jobStatus;
         const hasProcessedCommits = Number(jobData.processedCommits || 0) > 0;
         const shouldResolve = jobData.status === 'completed' || jobData.ready || hasProcessedCommits;
@@ -117,10 +117,8 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         if (shouldResolve && (jobData.repository || jobData.repoId)) {
             const resolvedRepo = jobData.repository as RepoData | undefined;
             if (resolvedRepo) {
-                Promise.resolve().then(() => {
-                    setRepoData(resolvedRepo);
-                    setFetchingRepo(false);
-                });
+                setRepoData(resolvedRepo);
+                setFetchingRepo(false);
             } else if (jobData.repoId) {
                 api.get<{ repository: RepoData }>(
                     `/api/repos/${jobData.repoId}/commits?page=1&limit=1`
@@ -130,12 +128,10 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
                 }).catch(() => { /* Retry on next poll */ });
             }
         } else if (jobData.status === 'failed') {
-            Promise.resolve().then(() => {
-                setFetchError(jobData.error || 'Failed to ingest repository');
-                setFetchingRepo(false);
-            });
+            setFetchError(jobData.error || 'Failed to ingest repository');
+            setFetchingRepo(false);
         }
-    }
+    }, [jobData]);
 
     async function persistEnteredApiKeys(current: Record<AIProviderType, ProviderSettings>): Promise<void> {
         const pendingWrites = PROVIDERS
@@ -246,12 +242,14 @@ export default function SetupFlow({ repoUrl, onCancel }: SetupFlowProps) {
         }
     }
 
-    // Trigger summary when loading step + repo data ready — render-phase
+    // Trigger summary when loading step + repo data ready
     const summaryTriggeredRef = useRef(false);
-    if (step === 'loading' && repoData && !generatingSummary && !summary && !summaryTriggeredRef.current) {
-        summaryTriggeredRef.current = true;
-        Promise.resolve().then(() => generateSummary());
-    }
+    useEffect(() => {
+        if (step === 'loading' && repoData && !generatingSummary && !summary && !summaryTriggeredRef.current) {
+            summaryTriggeredRef.current = true;
+            generateSummary();
+        }
+    }, [step, repoData, generatingSummary, summary]);
 
     function viewTimeline() {
         if (repoData) {

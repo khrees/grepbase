@@ -106,8 +106,10 @@ async function fetchAvailableGeminiModels(apiKey: string): Promise<string[]> {
         return cached.models;
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
-    const response = await fetch(url);
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models';
+    const response = await fetch(url, {
+        headers: { 'x-goog-api-key': apiKey },
+    });
     if (!response.ok) {
         throw new Error(`Failed to fetch Gemini models: ${response.status} ${response.statusText}`);
     }

@@ -78,11 +78,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [testError, setTestError] = useState<string | null>(null);
 
     // Load settings once
-    const settingsLoadedRef = useRef(false);
-    if (!settingsLoadedRef.current) {
-        settingsLoadedRef.current = true;
+    useEffect(() => {
         loadFromStorage();
-    }
+    }, [loadFromStorage]);
 
     // Reset local state when modal closes/opens
     useEffect(() => {
@@ -254,9 +252,25 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const models = detectedModels[activeProvider] || getAvailableModels(activeProvider);
     const isLocal = activeProvider === 'ollama' || activeProvider === 'lmstudio';
 
+    // Close on Escape key
+    useEffect(() => {
+        if (!isOpen) return;
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        document.addEventListener('keydown', handleEscape);
+        return () => document.removeEventListener('keydown', handleEscape);
+    }, [isOpen, onClose]);
+
     return (
         <div className={styles.overlay} onClick={onClose}>
-            <div className={styles.modal} onClick={e => e.stopPropagation()}>
+            <div 
+                className={styles.modal} 
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Settings"
+            >
                 {/* Header */}
                 <div className={styles.header}>
                     <div className={styles.titleArea}>

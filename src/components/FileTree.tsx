@@ -169,6 +169,9 @@ function TreeNodeComponent({
                 className={`${styles.node} ${isSelected ? styles.nodeSelected : ''}`}
                 onClick={handleClick}
                 style={{ paddingLeft: `${depth * 16 + 8}px` }}
+                role="treeitem"
+                aria-expanded={node.isFolder ? isExpanded : undefined}
+                aria-selected={!node.isFolder ? isSelected : undefined}
             >
                 {/* Expand/collapse icon for folders */}
                 <span className={styles.expandIcon}>
@@ -285,7 +288,7 @@ export default memo(function FileTree({ files, selectedFile, onSelectFile }: Fil
     }
 
     return (
-        <div className={styles.tree}>
+        <div className={styles.tree} role="tree">
             {tree.map(node => (
                 <TreeNodeComponent
                     key={node.path}
