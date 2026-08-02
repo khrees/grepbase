@@ -184,8 +184,42 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }
     }
 
+    const testErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const githubErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Clean up timers on unmount
+    useEffect(() => {
+        return () => {
+            if (testErrorTimerRef.current) clearTimeout(testErrorTimerRef.current);
+            if (githubErrorTimerRef.current) clearTimeout(githubErrorTimerRef.current);
+        };
+    }, []);
+
+    const showTestFeedback = (msg: string | null, result: 'success' | 'error' | null) => {
+        setTestResult(result);
+        setTestError(msg);
+        if (testErrorTimerRef.current) clearTimeout(testErrorTimerRef.current);
+        if (msg) {
+            testErrorTimerRef.current = setTimeout(() => {
+                setTestResult(null);
+                setTestError(null);
+            }, 5000);
+        }
+    };
+
+    const showGithubFeedbackError = (msg: string) => {
+        setGithubVerifyResult('error');
+        setGithubVerifyError(msg);
+        if (githubErrorTimerRef.current) clearTimeout(githubErrorTimerRef.current);
+        githubErrorTimerRef.current = setTimeout(() => {
+            setGithubVerifyResult(null);
+            setGithubVerifyError(null);
+        }, 5000);
+    };
+
     async function testConnection() {
         setTesting(true);
+        if (testErrorTimerRef.current) clearTimeout(testErrorTimerRef.current);
         setTestResult(null);
         setTestError(null);
 
@@ -194,7 +228,6 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const discoveredModels = await getModelsForProvider(activeProvider, currentSettings.baseUrl);
 
             if (discoveredModels.length > 0) {
-                setTestResult('success');
                 setDetectedModels(prev => ({
                     ...prev,
                     [activeProvider]: discoveredModels,
@@ -206,15 +239,34 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     : discoveredModels[0];
 
                 updateSetting(activeProvider, 'model', nextModel);
-                setTestError(`Found ${discoveredModels.length} installed model(s): ${discoveredModels.slice(0, 3).join(', ')}${discoveredModels.length > 3 ? '...' : ''}`);
+                showTestFeedback(`Found ${discoveredModels.length} installed model(s): ${discoveredModels.slice(0, 3).join(', ')}${discoveredModels.length > 3 ? '...' : ''}`, 'success');
             } else {
-                setTestResult('error');
                 const targetUrl = currentSettings.baseUrl || (activeProvider === 'ollama' ? 'http://localhost:11434' : 'http://127.0.0.1:1234');
-                setTestError(`Could not detect installed models. Ensure ${PROVIDER_NAMES[activeProvider]} is running at ${targetUrl}`);
+                const isCloudDeploy = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+                const isLocalHostTarget = targetUrl.includes('localhost') || targetUrl.includes('127.0.0.1');
+
+                if ((activeProvider === 'ollama' || activeProvider === 'lmstudio') && isCloudDeploy && isLocalHostTarget) {
+                    const toastMsg = `Cloud servers cannot reach localhost. Run Grepbase locally (bun run dev) or use a public Tunnel URL (e.g. ngrok).`;
+                    showTestFeedback(toastMsg, 'error');
+                    fireToast(toastMsg, 'error', 7000);
+                } else {
+                    const errText = `Could not detect installed models. Ensure ${PROVIDER_NAMES[activeProvider]} is running at ${targetUrl}`;
+                    showTestFeedback(errText, 'error');
+                    fireToast(errText, 'error', 5000);
+                }
             }
         } catch (error) {
-            setTestResult('error');
-            setTestError(error instanceof Error ? error.message : 'Connection failed');
+            const rawErr = error instanceof Error ? error.message : 'Connection failed';
+            const isCloudDeploy = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
+            if ((activeProvider === 'ollama' || activeProvider === 'lmstudio') && isCloudDeploy) {
+                const toastMsg = `Cloud servers cannot reach local servers (localhost). Run Grepbase locally (bun run dev) or use a public Tunnel URL (e.g. ngrok).`;
+                showTestFeedback(toastMsg, 'error');
+                fireToast(toastMsg, 'error', 7000);
+            } else {
+                showTestFeedback(rawErr, 'error');
+                fireToast(rawErr, 'error', 5000);
+            }
         } finally {
             setTesting(false);
         }
@@ -223,8 +275,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     async function verifyGithubToken() {
         const tokenToTest = enteredGithubToken.trim();
         if (!tokenToTest) {
-            setGithubVerifyResult('error');
-            setGithubVerifyError('Please enter a GitHub access token.');
+            showGithubFeedbackError('Please enter a GitHub access token.');
             return;
         }
 
@@ -262,8 +313,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 scopes,
             });
         } catch (error) {
-            setGithubVerifyResult('error');
-            setGithubVerifyError(error instanceof Error ? error.message : 'Connection failed');
+            showGithubFeedbackError(error instanceof Error ? error.message : 'Connection failed');
         } finally {
             setIsVerifyingGithub(false);
         }

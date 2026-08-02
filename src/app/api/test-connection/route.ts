@@ -157,7 +157,9 @@ async function fetchModels(provider: AIProviderType, baseUrl?: string, apiKey?: 
                 }
             }
 
-            if (lastError) throw lastError;
+            if (lastError) {
+                throw new Error(`Could not connect to ${provider === 'ollama' ? 'Ollama' : 'LM Studio'} at ${rawBase}. Ensure the local server is running.`);
+            }
             return [];
         }
 
@@ -242,10 +244,7 @@ export async function POST(request: NextRequest) {
         }
         return response;
     } catch (error) {
-        const message =
-            process.env.NODE_ENV === 'development' && error instanceof Error
-                ? error.message
-                : 'Connection failed';
+        const message = error instanceof Error ? error.message : 'Connection failed';
         requestLogger.error({ error, message }, 'Test connection failed');
         return NextResponse.json({ error: message }, { status: 500 });
     }
