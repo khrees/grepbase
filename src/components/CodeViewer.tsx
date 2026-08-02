@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useCallback, useMemo, useRef, useState, memo } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect, memo } from 'react';
 import { Check, Copy, FileCode2 } from 'lucide-react';
 import { Highlight, themes } from 'prism-react-renderer';
 import styles from './CodeViewer.module.css';
@@ -103,6 +103,14 @@ export default memo(function CodeViewer({ code, language, filename }: CodeViewer
         if (!code) return 0;
         return code.split('\n').length;
     }, [code]);
+
+    useEffect(() => {
+        return () => {
+            if (copyResetTimerRef.current) {
+                clearTimeout(copyResetTimerRef.current);
+            }
+        };
+    }, []);
 
 
 

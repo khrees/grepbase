@@ -18,7 +18,7 @@ export interface AIProviderConfig {
 }
 
 // Default models for each provider (Curated top 5 per provider)
-const DEFAULT_MODELS: Record<AIProviderType, string> = {
+export const DEFAULT_MODELS: Record<AIProviderType, string> = {
     gemini: 'gemini-3.6-flash',
     openai: 'gpt-5.6-sol',
     anthropic: 'claude-sonnet-5',

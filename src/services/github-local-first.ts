@@ -107,8 +107,6 @@ export async function getCommitsPage(
         await tieredCache.set(key, fresh, 'medium');
         await tieredCache.setShared(key, fresh, 'medium');
         
-        void backgroundRefresh(key, 'medium', () => github.fetchCommitHistoryPage(owner, repo, page, perPage));
-        
         return { data: fresh, stale: false, source: 'fetch' };
     } catch (error) {
         localFirstLogger.warn({ owner, repo, page, perPage, error }, 'Failed to fetch commits');
@@ -187,8 +185,6 @@ export async function getReadme(owner: string, repo: string): Promise<LocalFirst
         const fresh = await github.fetchReadme(owner, repo);
         await tieredCache.set(key, fresh, 'fast');
         await tieredCache.setShared(key, fresh, 'fast');
-        
-        void backgroundRefresh(key, 'fast', () => github.fetchReadme(owner, repo));
         
         return { data: fresh, stale: false, source: 'fetch' };
     } catch (error) {

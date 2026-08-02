@@ -47,21 +47,7 @@ export async function GET(request: NextRequest) {
                 .limit(1);
         }
 
-        // Fall back to owner+name lookup (for default branch or if branch URL not found)
         if (!repo || repo.length === 0) {
-            const baseUrl = `https://github.com/${owner}/${repoName}`;
-            repo = await db.select()
-                .from(repositories)
-                .where(and(
-                    eq(repositories.owner, owner),
-                    eq(repositories.name, repoName),
-                    eq(repositories.url, baseUrl)
-                ))
-                .limit(1);
-        }
-
-        // Final fallback: just owner+name (legacy entries)
-        if (repo.length === 0) {
             repo = await db.select()
                 .from(repositories)
                 .where(and(

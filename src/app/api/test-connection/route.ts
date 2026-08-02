@@ -52,7 +52,7 @@ const testConnectionSchema = z
         }
     });
 
-type ModelEntry = { id?: string; name?: string };
+type ModelEntry = { id?: string; name?: string; model?: string };
 type GeminiModelEntry = { name?: string; supportedGenerationMethods?: string[] };
 
 function normalizeModelName(name: string): string {
@@ -62,7 +62,7 @@ function normalizeModelName(name: string): string {
 function normalizeModels(models: unknown): string[] {
     if (!Array.isArray(models)) return [];
     return (models as ModelEntry[])
-        .map((model) => model.id || model.name)
+        .map((model) => model.id || model.name || model.model)
         .filter((name): name is string => typeof name === 'string')
         .map(normalizeModelName);
 }
@@ -137,27 +137,28 @@ async function fetchModels(provider: AIProviderType, baseUrl?: string, apiKey?: 
             const defaultBase =
                 provider === 'ollama' ? 'http://localhost:11434/v1' : 'http://127.0.0.1:1234/v1';
             const rawBase = (safeBaseUrl || defaultBase).trim().replace(/\/+$/, '');
-            const baseWithV1 = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+            const rootBase = rawBase.replace(/\/v1$/, '');
+            const v1Base = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
 
-            const endpoints = [`${baseWithV1}/models`];
-            if (provider === 'ollama') {
-                const root = rawBase.replace(/\/v1$/, '');
-                endpoints.push(`${root}/api/tags`);
-            }
+            const endpoints = [
+                ...(provider === 'ollama' ? [`${rootBase}/api/tags`] : []),
+                `${v1Base}/models`,
+                `${rootBase}/models`,
+            ];
 
             let lastError: Error | null = null;
             for (const endpoint of endpoints) {
                 try {
                     const data = await fetchJson(endpoint);
                     const models = normalizeModels(data.data || data.models);
-                    if (models.length) return models;
-                    return [];
+                    if (models.length > 0) return models;
                 } catch (error) {
                     lastError = error instanceof Error ? error : new Error('Connection failed');
                 }
             }
 
-            throw lastError || new Error('Connection failed');
+            if (lastError) throw lastError;
+            return [];
         }
 
         case 'glm':

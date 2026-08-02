@@ -34,12 +34,7 @@ export async function GET(
         }
 
         const jobData = job[0];
-        let hasAccess = await hasJobAccess(jobId, session.sessionId);
-
-        // Compatibility path for older jobs that predate explicit job ownership mapping.
-        if (!hasAccess && jobData.repoId) {
-            hasAccess = await hasRepoAccess(jobData.repoId, session.sessionId);
-        }
+        const hasAccess = await hasJobAccess(jobId, session.sessionId);
 
         if (!hasAccess) {
             requestLogger.warn({ jobId, sessionId: session.sessionId }, 'Forbidden job access');

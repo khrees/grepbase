@@ -21,62 +21,60 @@ interface TreeNode {
 }
 
 // Map file extensions to icon components and colors
+const ICON_MAP: Record<string, { icon: typeof File; color: string }> = {
+    // JavaScript/TypeScript
+    'js': { icon: FileCode, color: '#f7df1e' },
+    'jsx': { icon: FileCode, color: '#61dafb' },
+    'ts': { icon: FileCode, color: '#3178c6' },
+    'tsx': { icon: FileCode, color: '#3178c6' },
+    // Web
+    'html': { icon: FileCode, color: '#e34c26' },
+    'css': { icon: FileCode, color: '#1572b6' },
+    'scss': { icon: FileCode, color: '#cc6699' },
+    'sass': { icon: FileCode, color: '#cc6699' },
+    // Data
+    'json': { icon: FileJson, color: '#cbcb41' },
+    'yaml': { icon: FileText, color: '#cb171e' },
+    'yml': { icon: FileText, color: '#cb171e' },
+    'xml': { icon: FileCode, color: '#e37933' },
+    // Docs
+    'md': { icon: FileText, color: '#083fa1' },
+    'txt': { icon: FileText, color: '#6d8086' },
+    'rst': { icon: FileText, color: '#6d8086' },
+    // Config
+    'toml': { icon: Cog, color: '#9c4121' },
+    'ini': { icon: Cog, color: '#6d8086' },
+    'env': { icon: Cog, color: '#ecd53f' },
+    // Images
+    'png': { icon: Image, color: '#a074c4' },
+    'jpg': { icon: Image, color: '#a074c4' },
+    'jpeg': { icon: Image, color: '#a074c4' },
+    'gif': { icon: Image, color: '#a074c4' },
+    'svg': { icon: Image, color: '#ffb13b' },
+    'ico': { icon: Image, color: '#a074c4' },
+    'webp': { icon: Image, color: '#a074c4' },
+    // Languages
+    'py': { icon: FileCode, color: '#3572a5' },
+    'rb': { icon: FileCode, color: '#701516' },
+    'go': { icon: FileCode, color: '#00add8' },
+    'rs': { icon: FileCode, color: '#dea584' },
+    'java': { icon: FileCode, color: '#b07219' },
+    'c': { icon: FileCode, color: '#555555' },
+    'cpp': { icon: FileCode, color: '#f34b7d' },
+    'h': { icon: FileCode, color: '#555555' },
+    'hpp': { icon: FileCode, color: '#f34b7d' },
+    'swift': { icon: FileCode, color: '#f05138' },
+    'kt': { icon: FileCode, color: '#a97bff' },
+    'php': { icon: FileCode, color: '#4f5d95' },
+    'sh': { icon: FileCode, color: '#89e051' },
+    'bash': { icon: FileCode, color: '#89e051' },
+    'zsh': { icon: FileCode, color: '#89e051' },
+    'sql': { icon: FileCode, color: '#e38c00' },
+};
+
 const getFileIcon = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
-
-    // Language-based icons
-    const iconMap: Record<string, { icon: typeof File; color: string }> = {
-        // JavaScript/TypeScript
-        'js': { icon: FileCode, color: '#f7df1e' },
-        'jsx': { icon: FileCode, color: '#61dafb' },
-        'ts': { icon: FileCode, color: '#3178c6' },
-        'tsx': { icon: FileCode, color: '#3178c6' },
-        // Web
-        'html': { icon: FileCode, color: '#e34c26' },
-        'css': { icon: FileCode, color: '#1572b6' },
-        'scss': { icon: FileCode, color: '#cc6699' },
-        'sass': { icon: FileCode, color: '#cc6699' },
-        // Data
-        'json': { icon: FileJson, color: '#cbcb41' },
-        'yaml': { icon: FileText, color: '#cb171e' },
-        'yml': { icon: FileText, color: '#cb171e' },
-        'xml': { icon: FileCode, color: '#e37933' },
-        // Docs
-        'md': { icon: FileText, color: '#083fa1' },
-        'txt': { icon: FileText, color: '#6d8086' },
-        'rst': { icon: FileText, color: '#6d8086' },
-        // Config
-        'toml': { icon: Cog, color: '#9c4121' },
-        'ini': { icon: Cog, color: '#6d8086' },
-        'env': { icon: Cog, color: '#ecd53f' },
-        // Images
-        'png': { icon: Image, color: '#a074c4' },
-        'jpg': { icon: Image, color: '#a074c4' },
-        'jpeg': { icon: Image, color: '#a074c4' },
-        'gif': { icon: Image, color: '#a074c4' },
-        'svg': { icon: Image, color: '#ffb13b' },
-        'ico': { icon: Image, color: '#a074c4' },
-        'webp': { icon: Image, color: '#a074c4' },
-        // Languages
-        'py': { icon: FileCode, color: '#3572a5' },
-        'rb': { icon: FileCode, color: '#701516' },
-        'go': { icon: FileCode, color: '#00add8' },
-        'rs': { icon: FileCode, color: '#dea584' },
-        'java': { icon: FileCode, color: '#b07219' },
-        'c': { icon: FileCode, color: '#555555' },
-        'cpp': { icon: FileCode, color: '#f34b7d' },
-        'h': { icon: FileCode, color: '#555555' },
-        'hpp': { icon: FileCode, color: '#f34b7d' },
-        'swift': { icon: FileCode, color: '#f05138' },
-        'kt': { icon: FileCode, color: '#a97bff' },
-        'php': { icon: FileCode, color: '#4f5d95' },
-        'sh': { icon: FileCode, color: '#89e051' },
-        'bash': { icon: FileCode, color: '#89e051' },
-        'zsh': { icon: FileCode, color: '#89e051' },
-        'sql': { icon: FileCode, color: '#e38c00' },
-    };
-
-    return iconMap[ext] || { icon: FileType, color: '#6d8086' };
+    return ICON_MAP[ext] || { icon: FileType, color: '#6d8086' };
 };
 
 // Build tree structure from flat file paths

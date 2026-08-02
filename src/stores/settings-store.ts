@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { type AIProviderType } from '@/services/ai-providers';
+import { type AIProviderType, DEFAULT_MODELS } from '@/services/ai-providers';
 import { secureStorage } from '@/lib/.client/secure-storage';
 
 interface ProviderSettings {
@@ -24,13 +24,13 @@ const PROVIDERS: AIProviderType[] = ['gemini', 'openai', 'anthropic', 'ollama', 
 
 function getDefaultSettings(): Record<AIProviderType, ProviderSettings> {
   return {
-    gemini: { apiKey: '', model: 'gemini-2.5-pro' },
-    openai: { apiKey: '', model: 'gpt-4o' },
-    anthropic: { apiKey: '', model: 'claude-sonnet-4-6' },
-    ollama: { apiKey: '', model: 'llama4:scout', baseUrl: 'http://localhost:11434/v1' },
-    lmstudio: { apiKey: '', model: 'llama4-scout', baseUrl: 'http://127.0.0.1:1234/v1' },
-    glm: { apiKey: '', model: 'glm-4.7', baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
-    kimi: { apiKey: '', model: 'kimi-k3', baseUrl: 'https://api.moonshot.cn/v1' },
+    gemini: { apiKey: '', model: DEFAULT_MODELS.gemini },
+    openai: { apiKey: '', model: DEFAULT_MODELS.openai },
+    anthropic: { apiKey: '', model: DEFAULT_MODELS.anthropic },
+    ollama: { apiKey: '', model: DEFAULT_MODELS.ollama, baseUrl: 'http://localhost:11434/v1' },
+    lmstudio: { apiKey: '', model: DEFAULT_MODELS.lmstudio, baseUrl: 'http://127.0.0.1:1234/v1' },
+    glm: { apiKey: '', model: DEFAULT_MODELS.glm, baseUrl: 'https://open.bigmodel.cn/api/paas/v4/' },
+    kimi: { apiKey: '', model: DEFAULT_MODELS.kimi, baseUrl: 'https://api.moonshot.cn/v1' },
   };
 }
 
