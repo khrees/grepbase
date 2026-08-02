@@ -246,12 +246,6 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         fireToast('Token marked for deletion. Click Save to apply.', 'info', 3000);
     }
 
-    if (!isOpen) return null;
-
-    const currentSettings = settings[activeProvider];
-    const models = detectedModels[activeProvider] || getAvailableModels(activeProvider);
-    const isLocal = activeProvider === 'ollama' || activeProvider === 'lmstudio';
-
     // Close on Escape key
     useEffect(() => {
         if (!isOpen) return;
@@ -261,6 +255,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         document.addEventListener('keydown', handleEscape);
         return () => document.removeEventListener('keydown', handleEscape);
     }, [isOpen, onClose]);
+
+    if (!isOpen) return null;
+
+    const currentSettings = settings[activeProvider];
+    const models = detectedModels[activeProvider] || getAvailableModels(activeProvider);
+    const isLocal = activeProvider === 'ollama' || activeProvider === 'lmstudio';
 
     return (
         <div className={styles.overlay} onClick={onClose}>

@@ -12,33 +12,81 @@ interface CodeViewerProps {
     filename: string;
 }
 
-// Map common language names to Prism language IDs
+// Map file extensions and language names to Prism language IDs
 const langMap: Record<string, string> = {
+    // JavaScript / TypeScript
     'javascript': 'javascript',
+    'js': 'javascript',
+    'mjs': 'javascript',
+    'cjs': 'javascript',
     'typescript': 'typescript',
+    'ts': 'typescript',
     'jsx': 'jsx',
     'tsx': 'tsx',
+
+    // Python
     'python': 'python',
+    'py': 'python',
+
+    // Rust
     'rust': 'rust',
+    'rs': 'rust',
+
+    // Go
     'go': 'go',
+
+    // Java / Kotlin / Swift
     'java': 'java',
-    'cpp': 'cpp',
-    'c': 'c',
-    'ruby': 'ruby',
-    'php': 'php',
-    'swift': 'swift',
     'kotlin': 'kotlin',
-    'markdown': 'markdown',
-    'json': 'json',
-    'yaml': 'yaml',
+    'kt': 'kotlin',
+    'swift': 'swift',
+
+    // C / C++ / C#
+    'c': 'c',
+    'h': 'c',
+    'cpp': 'cpp',
+    'cxx': 'cpp',
+    'cc': 'cpp',
+    'hpp': 'cpp',
+    'cs': 'csharp',
+
+    // Ruby / PHP
+    'ruby': 'ruby',
+    'rb': 'ruby',
+    'php': 'php',
+
+    // Web / Styles / Markup
+    'html': 'markup',
+    'htm': 'markup',
+    'xml': 'markup',
+    'svg': 'markup',
     'css': 'css',
     'scss': 'scss',
-    'html': 'markup',
-    'xml': 'markup',
+    'sass': 'scss',
+    'less': 'css',
+
+    // Data / Config
+    'json': 'json',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'toml': 'toml',
     'sql': 'sql',
+
+    // Markdown / Docs
+    'markdown': 'markdown',
+    'md': 'markdown',
+    'mdx': 'markdown',
+
+    // Shell / Scripting
     'bash': 'bash',
+    'sh': 'bash',
+    'zsh': 'bash',
     'shell': 'bash',
+
+    // Plain text
     'plaintext': 'plain',
+    'text': 'plain',
+    'txt': 'plain',
 };
 
 export default memo(function CodeViewer({ code, language, filename }: CodeViewerProps) {
@@ -46,9 +94,10 @@ export default memo(function CodeViewer({ code, language, filename }: CodeViewer
     const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
     const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const normalizedLanguage = (language || 'text').toLowerCase();
-    const lang = langMap[normalizedLanguage] || 'plain';
-    const displayLanguage = lang === 'plain' ? 'text' : normalizedLanguage;
+    const extFromFilename = filename ? filename.split('.').pop()?.toLowerCase() || '' : '';
+    const rawLang = (language || extFromFilename || 'text').toLowerCase();
+    const lang = langMap[rawLang] || 'plain';
+    const displayLanguage = lang === 'plain' ? 'text' : rawLang;
 
     const lineCount = useMemo(() => {
         if (!code) return 0;

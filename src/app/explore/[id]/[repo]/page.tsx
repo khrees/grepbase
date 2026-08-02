@@ -418,28 +418,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
         { enabled: centerView === 'diff' && diffScope === 'compare' && !!selectedFile }
     );
 
-    // ── Skip empty commits on initial load ───────────────────
-    // If the landing commit has no files, advance until we find one that does.
-    // Uses SHA-based tracking so resyncs (new SHAs) are re-checked,
-    // but manual navigation to a previously-skipped commit is respected.
-    const checkedShasRef = useRef<Set<string>>(new Set());
-    useEffect(() => {
-        if (!currentCommitSha) return;
-        if (filesQuery.isLoading || filesQuery.isError) return;
 
-        // Already checked this SHA — never auto-advance a second time
-        if (checkedShasRef.current.has(currentCommitSha)) return;
-
-        checkedShasRef.current = new Set(checkedShasRef.current).add(currentCommitSha);
-
-        // This commit has files — done
-        if (files.length > 0) return;
-
-        // Empty commit — advance to next if available
-        if (currentIndex < commits.length - 1) {
-            setCurrentIndex(currentIndex + 1);
-        }
-    }, [files, filesQuery.isLoading, filesQuery.isError, currentIndex, commits.length, setCurrentIndex, currentCommitSha]);
 
     // ── Commit persistence ───────────────────────────────────
     const { persist: persistCommit } = useCommitPersistence(commits, id, setCurrentIndex);
@@ -559,7 +538,7 @@ export default function ExplorePage({ params }: { params: Promise<{ id: string; 
     // ──────────────────────────────────────────────────────────
     // Render
     // ──────────────────────────────────────────────────────────
-    if (repoQuery.isLoading || repoQuery.isAutoIngesting) {
+    if (repoQuery.isLoading || repoQuery.isAutoIngesting || commitsQuery.isLoading) {
         return (
             <div className={styles.loadingState}>
                 <Loader2 size={32} className={styles.spinner} />

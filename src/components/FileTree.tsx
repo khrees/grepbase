@@ -216,8 +216,8 @@ function TreeNodeComponent({
 }
 
 export default memo(function FileTree({ files, selectedFile, onSelectFile }: FileTreeProps) {
-    // Filter to only files that should be shown
-    const visibleFiles = files.filter(f => f.shouldFetchContent || f.hasContent);
+    // Show all repository files in the tree
+    const visibleFiles = useMemo(() => files.filter(f => Boolean(f.path)), [files]);
 
     // Build tree structure
     const tree = useMemo(() => buildTree(visibleFiles), [visibleFiles]);

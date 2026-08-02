@@ -21,14 +21,12 @@ export function useCommitFiles(
   return useQuery({
     queryKey: ['commit-files', repoId, commitSha, onlyChanged],
     queryFn: async () => {
-      if (onlyChanged) {
-        // Fetch diff of commit to get list of changed/modified/created files
+      async function fetchChangedFiles(): Promise<FileData[]> {
         const diffRes = await api.get<{ files?: DiffFileData[] }>(
           `/api/repos/${repoId}/commits/${commitSha}/diff`
         );
         const changedFiles = diffRes.files || [];
 
-        // Also fetch snapshot files if available to retrieve full metadata/content
         let snapshotFiles: FileData[] = [];
         try {
           const snapshotRes = await api.get<CommitFilesResponse>(
@@ -44,7 +42,6 @@ export function useCommitFiles(
         const seen = new Set<string>();
 
         for (const diffFile of changedFiles) {
-          // Omit completely removed files from the explore file tree
           if (diffFile.status === 'removed') continue;
 
           const targetPath = diffFile.path || diffFile.previousPath;
@@ -69,10 +66,22 @@ export function useCommitFiles(
         return result;
       }
 
-      const data = await api.get<CommitFilesResponse>(
-        `/api/repos/${repoId}/commits/${commitSha}`
-      );
-      return data.files || [];
+      if (onlyChanged) {
+        return fetchChangedFiles();
+      }
+
+      try {
+        const data = await api.get<CommitFilesResponse>(
+          `/api/repos/${repoId}/commits/${commitSha}`
+        );
+        if (data.files && data.files.length > 0) {
+          return data.files;
+        }
+      } catch {
+        // Full tree fetch failed (e.g. rate limit / network error) — fallback to changed files
+      }
+
+      return fetchChangedFiles();
     },
     enabled: !!repoId && !!commitSha,
     staleTime: 5 * 60_000,
