@@ -28,10 +28,7 @@ export function normalizeProviderBaseUrl(
         case 'ollama':
         case 'lmstudio': {
             if (protocol !== 'http:' && protocol !== 'https:') {
-                throw new Error('Local provider base URL must use HTTP/HTTPS');
-            }
-            if (!isAllowedLoopbackHost(host)) {
-                throw new Error('Local provider base URL must target localhost or loopback');
+                throw new Error('Local provider base URL must use HTTP or HTTPS');
             }
             break;
         }
