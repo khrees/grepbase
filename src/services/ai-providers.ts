@@ -17,14 +17,14 @@ export interface AIProviderConfig {
     model?: string;
 }
 
-// Default models for each provider
+// Default models for each provider (Curated top 5 per provider)
 const DEFAULT_MODELS: Record<AIProviderType, string> = {
-    gemini: 'gemini-2.5-pro',
-    openai: 'gpt-4o',
-    anthropic: 'claude-sonnet-4-6',
-    ollama: 'llama4:scout',
-    lmstudio: 'llama4-scout',
-    glm: 'glm-4.7',
+    gemini: 'gemini-3.6-flash',
+    openai: 'gpt-5.6-sol',
+    anthropic: 'claude-sonnet-5',
+    ollama: 'qwen3.6:27b',
+    lmstudio: 'qwen3-30b-a3b',
+    glm: 'glm-5.2',
     kimi: 'kimi-k3',
 };
 
@@ -136,10 +136,11 @@ function pickGeminiModel(requestedModel: string | undefined, discoveredModels: s
     }
 
     const preferredOrder = [
+        'gemini-3.6-flash',
+        'gemini-3.1-pro',
+        'gemini-3.5-flash',
+        'gemini-3.5-flash-lite',
         'gemini-2.5-pro',
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-lite',
-        'gemini-2.0-flash',
     ];
 
     const preferredAvailable = preferredOrder.find(model => discoveredModels.includes(model));
@@ -249,73 +250,59 @@ export function getAvailableModels(type: AIProviderType): string[] {
     switch (type) {
         case 'gemini':
             return [
+                'gemini-3.6-flash',
+                'gemini-3.1-pro',
+                'gemini-3.5-flash',
+                'gemini-3.5-flash-lite',
                 'gemini-2.5-pro',
-                'gemini-2.5-flash',
-                'gemini-2.5-flash-lite',
-                'gemini-2.0-flash',
             ];
         case 'openai':
             return [
-                'gpt-4o',
-                'gpt-4o-mini',
                 'gpt-5.6-sol',
                 'gpt-5.6-terra',
                 'gpt-5.6-luna',
-                'o3',
-                'o3-pro',
-                'o4-mini',
-                'o1',
-                'o1-mini',
+                'gpt-4o',
+                'gpt-4o-mini',
             ];
         case 'anthropic':
             return [
+                'claude-sonnet-5',
+                'claude-opus-5',
                 'claude-opus-4-8',
-                'claude-opus-4-7',
-                'claude-opus-4-6',
                 'claude-sonnet-4-6',
-                'claude-sonnet-4-5',
                 'claude-haiku-4-5',
             ];
         case 'ollama':
             return [
-                'llama4:scout',
-                'llama4:maverick',
                 'qwen3.6:27b',
-                'qwen3:8b',
-                'qwen3:30b',
-                'qwen3:235b',
-                'gemma3:9b',
+                'llama4:scout',
                 'deepseek-r1:14b',
-                'deepseek-r1:32b',
-                'phi4:14b',
+                'qwen3:8b',
+                'gemma3:9b',
             ];
         case 'lmstudio':
             return [
-                'llama4-scout',
-                'llama4-maverick',
                 'qwen3-30b-a3b',
+                'llama4-scout',
+                'deepseek-r1-distill-qwen-14b',
                 'qwen3-8b',
                 'gemma3-9b-it',
-                'deepseek-r1-distill-qwen-14b',
-                'deepseek-r1-distill-llama-8b',
             ];
         case 'glm':
             return [
+                'glm-5.2',
+                'glm-5.1',
                 'glm-4.7',
                 'glm-4.7-flash',
-                'glm-4.7-flashx',
                 'glm-4.6',
-                'glm-4.5',
             ];
         case 'kimi':
             return [
                 'kimi-k3',
                 'kimi-k2.7-code',
-                'kimi-k2.7-code-highspeed',
                 'kimi-k2.6',
+                'kimi-k2-thinking',
                 'moonshot-v1-128k',
-                'moonshot-v1-32k',
-                'moonshot-v1-8k',
             ];
         default:
             return [];
@@ -340,59 +327,45 @@ export const PROVIDER_NAMES: Record<AIProviderType, string> = {
  */
 export const MODEL_DESCRIPTIONS: Record<string, string> = {
     // Gemini
-    'gemini-2.5-pro': 'Most capable, adaptive thinking',
-    'gemini-2.5-flash': 'Fast, price-performance optimized',
-    'gemini-2.5-flash-lite': 'Fastest, most cost-efficient',
-    'gemini-2.0-flash': 'Previous-gen, still capable',
+    'gemini-3.6-flash': 'Latest fast flagship model, highly capable',
+    'gemini-3.1-pro': 'Flagship reasoning & deep code analysis',
+    'gemini-3.5-flash': 'High performance, cost-efficient for code',
+    'gemini-3.5-flash-lite': 'Fastest, low-latency execution',
+    'gemini-2.5-pro': 'Proven multimodal & long context',
     // OpenAI
-    'gpt-4o': 'Versatile, high-intelligence flagship',
-    'gpt-4o-mini': 'Fast, affordable small model',
     'gpt-5.6-sol': 'Flagship for complex reasoning & coding',
     'gpt-5.6-terra': 'Balanced intelligence and cost',
-    'gpt-5.6-luna': 'Cost-sensitive, high-volume workloads',
-    'o3': 'Powerful reasoning model',
-    'o3-pro': 'Extra compute for better responses',
-    'o4-mini': 'Fast, cost-efficient reasoning',
-    'o1': 'Strong reasoning capabilities',
-    'o1-mini': 'Affordable reasoning model',
+    'gpt-5.6-luna': 'Fast, cost-efficient model',
+    'gpt-4o': 'Versatile, high-intelligence flagship',
+    'gpt-4o-mini': 'Affordable, fast small model',
     // Anthropic
-    'claude-opus-4-8': 'Most capable, agentic coding & enterprise',
-    'claude-opus-4-7': 'Advanced reasoning, 1M context',
-    'claude-opus-4-6': 'Excellent code review & debugging',
-    'claude-sonnet-4-6': 'Best speed + intelligence balance',
-    'claude-sonnet-4-5': 'Strong all-around performance',
-    'claude-haiku-4-5': 'Fastest, near-frontier intelligence',
+    'claude-sonnet-5': 'Best speed + intelligence balance',
+    'claude-opus-5': 'Enterprise & complex agentic coding',
+    'claude-opus-4-8': 'High-end reasoning & code review',
+    'claude-sonnet-4-6': 'Production-grade balanced performance',
+    'claude-haiku-4-5': 'Fastest, low-cost execution',
     // Ollama
+    'qwen3.6:27b': 'Best local coding model (SWE-bench SOTA)',
     'llama4:scout': 'Meta Llama 4, 10M context, MoE',
-    'llama4:maverick': 'Higher quality, 400B MoE',
-    'qwen3.6:27b': 'Best local coding model (SWE-bench 77%)',
-    'qwen3:8b': 'Efficient all-rounder',
-    'qwen3:30b': 'Strong MoE, 256K context',
-    'qwen3:235b': 'Frontier-level, 235B MoE',
-    'gemma3:9b': 'Google, vision support',
     'deepseek-r1:14b': 'Reasoning & math specialist',
-    'deepseek-r1:32b': 'Advanced reasoning, 32B',
-    'phi4:14b': 'Microsoft, strong for its size',
+    'qwen3:8b': 'Efficient local all-rounder',
+    'gemma3:9b': 'Google, vision & code support',
     // LMStudio
+    'qwen3-30b-a3b': 'Strong local MoE coding model',
     'llama4-scout': 'Meta Llama 4, general-purpose',
-    'llama4-maverick': 'Higher quality, 400B MoE',
-    'qwen3-30b-a3b': 'Strong MoE coding model',
-    'qwen3-8b': 'Efficient all-rounder',
-    'gemma3-9b-it': 'Google, vision support',
-    'deepseek-r1-distill-qwen-14b': 'Distilled reasoning, 14B',
-    'deepseek-r1-distill-llama-8b': 'Distilled reasoning, 8B',
+    'deepseek-r1-distill-qwen-14b': 'Distilled reasoning model',
+    'qwen3-8b': 'Efficient local all-rounder',
+    'gemma3-9b-it': 'Google, vision & code support',
     // GLM
-    'glm-4.7': 'Latest flagship, coding & reasoning',
-    'glm-4.7-flash': 'Free-tier, fast & efficient',
-    'glm-4.7-flashx': 'Enhanced flash variant',
-    'glm-4.6': 'Strong coding capabilities',
-    'glm-4.5': 'Native agentic LLM',
+    'glm-5.2': 'Latest SOTA coding & 1M context',
+    'glm-5.1': 'Autonomous & engineering deliverable focus',
+    'glm-4.7': 'Stable multi-step reasoning & programming',
+    'glm-4.7-flash': 'Fast, lightweight 30B model',
+    'glm-4.6': 'Open MoE model with strong code capabilities',
     // Kimi
-    'kimi-k3': 'Most capable, 2.8T params, 1M context',
-    'kimi-k2.7-code': 'Dedicated coding model',
-    'kimi-k2.7-code-highspeed': 'Fast coding, ~180 tok/s',
-    'kimi-k2.6': 'Visual + text, thinking modes',
-    'moonshot-v1-128k': 'Very long context (128K)',
-    'moonshot-v1-32k': 'Long context (32K)',
-    'moonshot-v1-8k': 'Short context (8K)',
+    'kimi-k3': 'Flagship 2.8T model, 1M context',
+    'kimi-k2.7-code': 'Dedicated high-level coding model',
+    'kimi-k2.6': 'Cost-effective 1T MoE, 256K context',
+    'kimi-k2-thinking': 'Deep reasoning workflows',
+    'moonshot-v1-128k': 'Long-context documentation model',
 };

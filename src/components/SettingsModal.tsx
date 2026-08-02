@@ -33,6 +33,49 @@ interface SettingsModalProps {
 
 type TabType = 'ai' | 'github' | 'preferences';
 
+async function fetchLocalProviderModels(
+    provider: 'ollama' | 'lmstudio',
+    baseUrl?: string
+): Promise<string[]> {
+    const defaultBase = provider === 'ollama' ? 'http://localhost:11434' : 'http://127.0.0.1:1234';
+    const rawBase = (baseUrl || defaultBase).trim().replace(/\/+$/, '');
+    const rootBase = rawBase.replace(/\/v1$/, '');
+    const v1Base = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+
+    const endpoints = [
+        ...(provider === 'ollama' ? [`${rootBase}/api/tags`] : []),
+        `${v1Base}/models`,
+        `${rootBase}/models`,
+    ];
+
+    for (const endpoint of endpoints) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const res = await fetch(endpoint, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (!res.ok) continue;
+
+            const data = await res.json() as Record<string, unknown>;
+            const rawModels = (data.data || data.models) as Array<Record<string, unknown>> | undefined;
+
+            if (Array.isArray(rawModels) && rawModels.length > 0) {
+                const names = rawModels
+                    .map(m => (typeof m.id === 'string' ? m.id : typeof m.name === 'string' ? m.name : typeof m.model === 'string' ? m.model : ''))
+                    .filter(Boolean);
+                if (names.length > 0) {
+                    return Array.from(new Set(names));
+                }
+            }
+        } catch {
+            // Ignore CORS or connection errors
+        }
+    }
+
+    return [];
+}
+
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const {
         settings,
@@ -95,6 +138,27 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         }
     }, [isOpen]);
 
+    // Auto-detect installed models for local providers when modal opens or provider changes
+    useEffect(() => {
+        if (!isOpen) return;
+
+        if (activeProvider === 'ollama' || activeProvider === 'lmstudio') {
+            const baseUrl = settings[activeProvider].baseUrl;
+            fetchLocalProviderModels(activeProvider, baseUrl).then(models => {
+                if (models.length > 0) {
+                    setDetectedModels(prev => ({
+                        ...prev,
+                        [activeProvider]: models,
+                    }));
+                    const currentModel = settings[activeProvider].model;
+                    if (!models.includes(currentModel)) {
+                        updateSetting(activeProvider, 'model', models[0]);
+                    }
+                }
+            });
+        }
+    }, [isOpen, activeProvider, settings, updateSetting]);
+
     async function persistEnteredApiKeys(current: Record<AIProviderType, ProviderSettings>): Promise<void> {
         const pendingWrites = PROVIDERS
             .map(provider => ({
@@ -153,6 +217,33 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
         try {
             const currentSettings = settings[activeProvider];
+
+            // Local providers (Ollama / LMStudio): Fetch directly in browser to hit user's local machine
+            if (activeProvider === 'ollama' || activeProvider === 'lmstudio') {
+                const localModels = await fetchLocalProviderModels(activeProvider, currentSettings.baseUrl);
+                if (localModels.length > 0) {
+                    setTestResult('success');
+                    setDetectedModels(prev => ({
+                        ...prev,
+                        [activeProvider]: localModels,
+                    }));
+
+                    const currentModel = currentSettings.model;
+                    const nextModel = localModels.includes(currentModel)
+                        ? currentModel
+                        : localModels[0];
+
+                    updateSetting(activeProvider, 'model', nextModel);
+                    setTestError(`Found ${localModels.length} installed model(s): ${localModels.slice(0, 3).join(', ')}${localModels.length > 3 ? '...' : ''}`);
+                } else {
+                    setTestResult('error');
+                    const targetUrl = currentSettings.baseUrl || (activeProvider === 'ollama' ? 'http://localhost:11434' : 'http://127.0.0.1:1234');
+                    setTestError(`Could not detect installed models. Ensure ${PROVIDER_NAMES[activeProvider]} is running at ${targetUrl}`);
+                }
+                return;
+            }
+
+            // Cloud providers: Fetch via server route
             const payload: { provider: AIProviderType; baseUrl?: string; apiKey?: string } = {
                 provider: activeProvider,
                 baseUrl: currentSettings.baseUrl,
